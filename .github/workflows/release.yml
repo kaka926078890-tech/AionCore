@@ -125,9 +125,9 @@ jobs:
             echo "Using RUSTFLAGS=${RUSTFLAGS}"
           fi
           if [[ "${{ matrix.use_cross }}" == "true" ]]; then
-            cross build --release --target ${{ matrix.target }} -p aionui-app
+            cross build --release --features findesk --target ${{ matrix.target }} -p aionui-app
           else
-            cargo build --release --target ${{ matrix.target }} -p aionui-app
+            cargo build --release --features findesk --target ${{ matrix.target }} -p aionui-app
           fi
 
       - name: Package binary (Unix)
