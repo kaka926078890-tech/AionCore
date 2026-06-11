@@ -10,7 +10,10 @@ use tracing::{info, warn};
 use crate::config::FindeskConfig;
 use crate::finsafe::finsafe_enabled;
 use crate::finclaw::binary::resolve_finclaw_binary;
-use crate::finclaw::port_json::read_claw_port;
+use crate::finclaw::port_json::{
+    probe_claw_health, probe_claw_real_llm_ready, read_claw_port, stop_profile_daemon,
+};
+use crate::finclaw::serve_config::prepare_workspace_skills_serve_config;
 
 #[derive(Debug, Clone)]
 pub struct FinclawGatewayConfig {
@@ -39,11 +42,34 @@ impl FinclawGateway {
 
     pub async fn ensure_started(&self) -> Result<u16, String> {
         if let Some(port) = *self.claw_port.lock().await {
-            return Ok(port);
+            if probe_claw_health(port).await && probe_claw_real_llm_ready(port).await {
+                return Ok(port);
+            }
+            warn!(port, "cached finclaw claw_port is unhealthy or mock-only; respawning");
+            *self.claw_port.lock().await = None;
+            if let Some(mut child) = self.child.lock().await.take() {
+                let _ = child.start_kill();
+            }
         }
+
         if let Some(port) = read_claw_port(&self.config.profile) {
-            *self.claw_port.lock().await = Some(port);
-            return Ok(port);
+            if probe_claw_health(port).await && probe_claw_real_llm_ready(port).await {
+                info!(
+                    profile = %self.config.profile,
+                    port,
+                    "reusing healthy finclaw serve daemon"
+                );
+                *self.claw_port.lock().await = Some(port);
+                return Ok(port);
+            }
+            if probe_claw_health(port).await {
+                warn!(
+                    profile = %self.config.profile,
+                    port,
+                    "finclaw daemon is mock-only; restarting with current profile config"
+                );
+                stop_profile_daemon(&self.config.profile).await;
+            }
         }
 
         let binary = resolve_finclaw_binary(&self.findesk, self.config.cli_path.as_deref())
@@ -68,6 +94,10 @@ impl FinclawGateway {
             .current_dir(&self.config.serve_cwd);
         for arg in &args {
             builder.arg(arg);
+        }
+        if let Some(config_path) = prepare_workspace_skills_serve_config(&self.config.serve_cwd) {
+            builder.arg("--config");
+            builder.arg(config_path);
         }
 
         let child = builder
@@ -95,7 +125,9 @@ impl FinclawGateway {
 
     async fn wait_for_port(&self) -> Result<u16, String> {
         for _ in 0..120 {
-            if let Some(port) = read_claw_port(&self.config.profile) {
+            if let Some(port) = read_claw_port(&self.config.profile)
+                && probe_claw_health(port).await
+            {
                 return Ok(port);
             }
             tokio::time::sleep(Duration::from_millis(500)).await;

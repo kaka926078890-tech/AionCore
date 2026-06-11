@@ -6,6 +6,7 @@ use aionui_api_types::FinclawBuildExtra;
 use aionui_common::{AgentKillReason, AgentType, ConversationStatus};
 use aionui_findesk::finclaw::{
     FinclawGateway, FinclawGatewayConfig, FinclawInferEvent, post_infer_stream,
+    resolve_finclaw_infer_capability,
 };
 use aionui_findesk::FindeskConfig;
 use futures_util::{pin_mut, StreamExt};
@@ -71,13 +72,6 @@ impl FinclawAgentManager {
             .unwrap_or_else(|| "default".to_string())
     }
 
-    fn resolve_capability(&self) -> &'static str {
-        match self.config.session_mode.as_deref() {
-            Some("yolo") | Some("auto") => "auto",
-            Some("readonly") | Some("read_only") => "readonly",
-            _ => "supervised",
-        }
-    }
 }
 
 #[async_trait::async_trait]
@@ -122,7 +116,8 @@ impl IAgentTask for FinclawAgentManager {
         self.runtime.reset_for_new_turn(ConversationStatus::Running);
 
         let user_id = self.resolve_user_id();
-        let capability = self.resolve_capability().to_string();
+        let capability =
+            resolve_finclaw_infer_capability(self.config.session_mode.as_deref()).to_string();
         let max_tokens = self.config.max_tokens;
 
         let mut stream = post_infer_stream(

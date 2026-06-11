@@ -69,7 +69,7 @@ pub use conversation::{
     ConversationArtifactStatus, ConversationListResponse, ConversationMcpStatus, ConversationMcpStatusKind,
     ConversationResponse, ConversationRuntimeStateKind, ConversationRuntimeSummary, CreateConversationRequest,
     ListConversationsQuery, ListMessagesQuery, MessageListResponse, MessageResponse, MessageSearchItem,
-    MessageSearchResponse, SearchMessagesQuery, SendMessageRequest, SendMessageResponse,
+    MessageSearchResponse, SearchMessagesQuery, SendMessageRequest, SendMessageResponse, UpsertCloudMessageRequest,
     UpdateConversationArtifactRequest, UpdateConversationRequest,
 };
 pub use cron::{

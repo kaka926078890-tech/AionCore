@@ -176,6 +176,8 @@ pub enum MessageType {
     AvailableCommands,
     SkillSuggest,
     CronTrigger,
+    /// Hub AG-UI MCP UI resource frame (FinDesk cloud conversations).
+    CloudMcpUi,
 }
 
 /// Display position of a message in the chat UI.

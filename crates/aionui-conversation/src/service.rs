@@ -16,7 +16,7 @@ use aionui_api_types::{
     ConversationResponse, ConversationRuntimeSummary, CreateConversationRequest, ListConversationsQuery,
     ListMessagesQuery, MessageListResponse, MessageResponse, MessageSearchResponse, SearchMessagesQuery,
     SendMessageRequest, SendMessageResponse, SessionMcpServer, SessionMcpTransport, UpdateConversationArtifactRequest,
-    UpdateConversationRequest, WebSocketMessage,
+    UpdateConversationRequest, UpsertCloudMessageRequest, WebSocketMessage,
 };
 use aionui_common::{
     AgentType, ConversationSource, ConversationStatus, ErrorChain, MessageType, OnConversationDelete, PaginatedResult,
@@ -25,7 +25,8 @@ use aionui_common::{
 use aionui_db::models::{ConversationRow, MessageRow};
 use aionui_db::{
     ConversationFilters, ConversationRowUpdate, CreateAcpSessionParams, IAcpSessionRepository,
-    IAgentMetadataRepository, IConversationRepository, IMcpServerRepository, SaveRuntimeStateParams, SortOrder,
+    IAgentMetadataRepository, IConversationRepository, IMcpServerRepository, MessageRowUpdate, SaveRuntimeStateParams,
+    SortOrder,
 };
 use aionui_mcp::{AcpMcpCapabilities, parse_acp_mcp_capabilities};
 use aionui_realtime::EventBroadcaster;
@@ -1097,12 +1098,28 @@ impl ConversationService {
         let mut total_response_content_bytes = 0usize;
         let mut items = Vec::with_capacity(result.items.len());
         for row in result.items {
+            let message_id = row.id.clone();
+            let message_type = row.r#type.clone();
             let original_content_bytes = row.content.len();
             total_original_content_bytes += original_content_bytes;
             let response = if compact_content {
-                row_to_message_response_compact(row)?
+                row_to_message_response_compact(row)
             } else {
-                row_to_message_response(row)?
+                row_to_message_response(row)
+            };
+
+            let response = match response {
+                Ok(response) => response,
+                Err(err) => {
+                    warn!(
+                        conversation_id,
+                        message_id = %message_id,
+                        message_type = %message_type,
+                        error = %err,
+                        "Skipping message that failed conversion"
+                    );
+                    continue;
+                }
             };
 
             if compact_content {
@@ -1575,6 +1592,88 @@ impl ConversationService {
     /// Used by paths outside the normal user→agent turn (e.g. the team
     /// scheduler writing an incoming teammate message as a left bubble in the
     /// target agent's conversation so the UI shows who spoke).
+    /// Persist or update a renderer-originated cloud message (Hub AG-UI stream).
+    pub async fn upsert_cloud_message(
+        &self,
+        user_id: &str,
+        conversation_id: &str,
+        message_id: &str,
+        req: UpsertCloudMessageRequest,
+    ) -> Result<(), ConversationError> {
+        let row = self
+            .conversation_repo
+            .get(conversation_id)
+            .await?
+            .filter(|r| r.user_id == user_id)
+            .ok_or_else(|| ConversationError::NotFound {
+                id: conversation_id.to_owned(),
+            })?;
+
+        if parse_agent_type_from_row(&row) != Some(AgentType::Cloud) {
+            return Err(ConversationError::BadRequest {
+                reason: "Message upsert is only supported for cloud conversations".into(),
+            });
+        }
+
+        if req.id != message_id {
+            return Err(ConversationError::BadRequest {
+                reason: "Path message id must match body id".into(),
+            });
+        }
+
+        let msg_type = req.r#type.trim();
+        if msg_type.is_empty() {
+            return Err(ConversationError::BadRequest {
+                reason: "type is required".into(),
+            });
+        }
+
+        let content = serde_json::to_string(&req.content).map_err(|e| {
+            ConversationError::internal(format!("Failed to serialize message content: {e}"))
+        })?;
+
+        let existing = self
+            .conversation_repo
+            .get_message_by_msg_id(conversation_id, &req.msg_id, msg_type)
+            .await?;
+
+        if let Some(existing_row) = existing {
+            let update = MessageRowUpdate {
+                content: Some(content),
+                status: Some(req.status.clone()),
+                hidden: Some(req.hidden),
+            };
+            self.conversation_repo
+                .update_message(&existing_row.id, &update)
+                .await?;
+        } else {
+            let message_row = MessageRow {
+                id: req.msg_id.clone(),
+                conversation_id: conversation_id.to_owned(),
+                msg_id: Some(req.msg_id.clone()),
+                r#type: msg_type.to_owned(),
+                content,
+                position: Some(req.position),
+                status: req.status,
+                hidden: req.hidden,
+                created_at: req.created_at.unwrap_or_else(now_ms),
+            };
+            self.conversation_repo.insert_message(&message_row).await?;
+        }
+
+        self.conversation_repo
+            .update(
+                conversation_id,
+                &ConversationRowUpdate {
+                    updated_at: Some(now_ms()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        Ok(())
+    }
+
     pub async fn insert_raw_message(&self, row: &MessageRow) -> Result<(), ConversationError> {
         self.conversation_repo.insert_message(row).await?;
 

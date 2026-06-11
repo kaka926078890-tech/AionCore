@@ -619,4 +619,24 @@ mod tests {
         let err = search_row_to_item(row, Path::new("/tmp/data")).unwrap_err();
         assert!(matches!(err, ConversationError::Internal { .. }));
     }
+
+    #[test]
+    fn row_to_message_response_cloud_mcp_ui() {
+        let row = MessageRow {
+            id: "mcp-ui-1".into(),
+            conversation_id: "conv-cloud".into(),
+            msg_id: Some("mcp-ui-1".into()),
+            r#type: "cloud_mcp_ui".into(),
+            content: r#"{"anchorMsgId":"anchor-1","resource":{"type":"externalUrl","uri":"https://example.com"}}"#
+                .into(),
+            position: Some("left".into()),
+            status: Some("finish".into()),
+            hidden: false,
+            created_at: 9000,
+        };
+
+        let response = row_to_message_response(row).unwrap();
+        assert_eq!(response.r#type, MessageType::CloudMcpUi);
+        assert_eq!(response.content["anchorMsgId"], "anchor-1");
+    }
 }

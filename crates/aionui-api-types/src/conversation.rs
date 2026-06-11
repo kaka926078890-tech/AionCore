@@ -80,6 +80,21 @@ pub struct SendMessageResponse {
     pub runtime: ConversationRuntimeSummary,
 }
 
+/// Body for `PUT /api/conversations/:id/messages/:messageId` (cloud renderer sync).
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpsertCloudMessageRequest {
+    pub id: String,
+    pub msg_id: String,
+    pub r#type: String,
+    pub content: serde_json::Value,
+    pub position: String,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub hidden: bool,
+    pub created_at: Option<TimestampMs>,
+}
+
 /// Body for `POST /api/conversations/:id/cancel`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CancelConversationRequest {

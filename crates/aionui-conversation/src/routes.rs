@@ -59,7 +59,10 @@ pub fn conversation_routes(state: ConversationRouterState) -> Router {
         .route("/api/conversations/{id}/reset", post(reset))
         .route("/api/conversations/{id}/associated", get(associated))
         .route("/api/conversations/{id}/messages", get(list_msg).post(send_msg))
-        .route("/api/conversations/{id}/messages/{messageId}", get(get_msg))
+        .route(
+            "/api/conversations/{id}/messages/{messageId}",
+            get(get_msg).put(upsert_cloud_msg),
+        )
         .route("/api/conversations/{id}/artifacts", get(list_artifacts))
         .route("/api/conversations/{id}/artifacts/{artifactId}", patch(update_artifact))
         .route("/api/conversations/{id}/cancel", post(cancel))
@@ -211,6 +214,21 @@ async fn send_msg(
         .await
         .map_err(ApiError::from)?;
     Ok((StatusCode::ACCEPTED, Json(ApiResponse::ok(response))))
+}
+
+async fn upsert_cloud_msg(
+    State(state): State<ConversationRouterState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(params): Path<MessagePathParams>,
+    body: Result<Json<aionui_api_types::UpsertCloudMessageRequest>, JsonRejection>,
+) -> Result<Json<ApiResponse<()>>, ApiError> {
+    let Json(req) = body.map_err(ApiError::from)?;
+    state
+        .service
+        .upsert_cloud_message(&user.id, &params.id, &params.message_id, req)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(ApiResponse::success()))
 }
 
 async fn list_artifacts(
