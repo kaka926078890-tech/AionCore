@@ -7,7 +7,7 @@ use tracing::warn;
 use crate::config::{FindeskConfig, path_exists};
 use crate::finsafe::enabled::finsafe_enabled;
 use crate::finsafe::policy::{pick_env_for_sandbox, resolve_runtime_policy_path};
-use crate::finsafe::profiles::ProfileContext;
+use crate::finsafe::profiles::{self, ProfileContext};
 
 #[derive(Debug, Clone)]
 pub struct FinsafeSpawnPolicy {
@@ -42,6 +42,12 @@ fn should_wrap(intent: &SpawnIntent) -> bool {
     }
     if intent.wrapper_mode == SpawnWrapperMode::InteractiveSelfConfine {
         return true;
+    }
+    if intent.wrapper_mode == SpawnWrapperMode::ShortLived {
+        return intent
+            .backend
+            .as_deref()
+            .is_some_and(|backend| profiles::resolve_profile_id(backend) != "finclaw-interactive");
     }
     is_finclaw_executable(intent.backend.as_deref(), &intent.program)
 }
@@ -159,6 +165,42 @@ mod tests {
         assert_ne!(resolved.program, intent.program);
         assert_eq!(resolved.program.to_string_lossy(), dir.path().join("finsafe").to_string_lossy());
         assert!(resolved.args.iter().any(|a| a == "self-confine"));
+    }
+
+    #[test]
+    fn wraps_short_lived_acp_backend() {
+        let dir = tempdir().unwrap();
+        let finsafe = dir.path().join("finsafe");
+        fs::write(&finsafe, b"").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&finsafe, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        shared_finsafe_enabled().store(true, Ordering::Relaxed);
+
+        let policy = FinsafeSpawnPolicy::new(FindeskConfig {
+            finsafe_bin: Some(finsafe),
+            finsafe_policies_dir: None,
+            finclaw_bin: None,
+            cache_dir: Some(dir.path().join("cache")),
+            work_dir: Some(dir.path().join("work")),
+            log_dir: None,
+        });
+
+        let intent = SpawnIntent {
+            backend: Some("hermes".into()),
+            program: OsString::from("/bin/hermes"),
+            args: vec![OsString::from("--help")],
+            cwd: Some(dir.path().join("workspace")),
+            child_env: HashMap::new(),
+            wrapper_mode: SpawnWrapperMode::ShortLived,
+        };
+
+        let resolved = policy.wrap(&intent);
+        assert_ne!(resolved.program, intent.program);
+        assert!(resolved.args.iter().any(|a| a == "run"));
     }
 
     #[test]

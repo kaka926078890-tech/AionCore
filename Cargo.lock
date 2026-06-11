@@ -662,6 +662,7 @@ dependencies = [
 name = "aionui-findesk"
 version = "0.1.27"
 dependencies = [
+ "aionui-api-types",
  "aionui-runtime",
  "async-stream",
  "dirs",

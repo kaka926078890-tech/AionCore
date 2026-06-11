@@ -15,9 +15,11 @@ use axum::routing::{get, patch, post, put};
 
 use aionui_api_types::{
     AcpHealthCheckRequest, AcpHealthCheckResponse, AgentMetadata, ApiResponse, CustomAgentUpsertRequest,
-    DeleteCustomAgentResponse, ProviderHealthCheckRequest, ProviderHealthCheckResponse, SetEnabledRequest,
-    TryConnectCustomAgentRequest, TryConnectCustomAgentResponse,
+    DeleteCustomAgentResponse, FinclawHostContext, FinclawHostUser, ProviderHealthCheckRequest,
+    ProviderHealthCheckResponse, SetEnabledRequest, TryConnectCustomAgentRequest, TryConnectCustomAgentResponse,
 };
+#[cfg(feature = "findesk")]
+use aionui_findesk::finclaw::{HostAgentRow, resolve_finclaw_host_context};
 use aionui_auth::CurrentUser;
 use aionui_common::ApiError;
 
@@ -25,7 +27,7 @@ use crate::routes::error_mapping::agent_error_to_api_error;
 use crate::routes::state::AgentRouterState;
 
 pub fn agent_routes(state: AgentRouterState) -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/api/agents", get(list_agents))
         .route("/api/agents/refresh", post(refresh_agents))
         .route("/api/agents/health-check", post(health_check))
@@ -33,8 +35,38 @@ pub fn agent_routes(state: AgentRouterState) -> Router {
         .route("/api/agents/{id}/enabled", patch(set_agent_enabled))
         .route("/api/agents/custom", post(create_custom))
         .route("/api/agents/custom/{id}", put(update_custom).delete(delete_custom))
-        .route("/api/agents/custom/try-connect", post(try_connect_custom))
-        .with_state(state)
+        .route("/api/agents/custom/try-connect", post(try_connect_custom));
+
+    #[cfg(feature = "findesk")]
+    let router = router.route("/api/agents/finclaw/host-context", get(finclaw_host_context));
+
+    router.with_state(state)
+}
+
+#[cfg(feature = "findesk")]
+async fn finclaw_host_context(
+    State(state): State<AgentRouterState>,
+    Extension(user): Extension<CurrentUser>,
+) -> Result<Json<ApiResponse<FinclawHostContext>>, ApiError> {
+    let agents = state.agent_registry.list_all().await;
+    let rows: Vec<HostAgentRow> = agents
+        .into_iter()
+        .map(|agent| HostAgentRow {
+            agent_type: agent.agent_type.serde_name().to_string(),
+            backend: agent.backend,
+            name: agent.name,
+            enabled: agent.enabled,
+            native_skills_dirs: agent.native_skills_dirs,
+        })
+        .collect();
+
+    let mut context = resolve_finclaw_host_context(&rows);
+    context.user = Some(FinclawHostUser {
+        id: user.id,
+        email: Some(user.username),
+    });
+
+    Ok(Json(ApiResponse::ok(context)))
 }
 
 async fn list_agents(

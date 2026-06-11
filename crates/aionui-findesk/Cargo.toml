@@ -6,6 +6,7 @@ license.workspace = true
 description = "FinDesk extension: FinSAFE spawn policy and related hooks"
 
 [dependencies]
+aionui-api-types.workspace = true
 aionui-runtime.workspace = true
 async-stream = "0.3"
 dirs.workspace = true

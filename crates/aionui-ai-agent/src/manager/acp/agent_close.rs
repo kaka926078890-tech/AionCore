@@ -136,7 +136,9 @@ mod tests {
             cwd: None,
         };
         let data_dir = tempfile::tempdir().unwrap();
-        let proc = CliAgentProcess::spawn_for_sdk(config, data_dir.path()).await.unwrap();
+        let proc = CliAgentProcess::spawn_for_sdk(config, data_dir.path(), None)
+            .await
+            .unwrap();
         tokio::time::timeout(Duration::from_secs(5), proc.wait_for_exit())
             .await
             .unwrap();

@@ -267,7 +267,7 @@ impl AgentInstance {
             Self::Acp(m) => m.get_confirmations(),
             Self::Aionrs(m) => m.get_confirmations(),
             #[cfg(feature = "findesk")]
-            Self::Finclaw(_) => Vec::new(),
+            Self::Finclaw(m) => m.get_confirmations(),
             #[cfg(any(test, feature = "test-support"))]
             Self::Mock(m) => m.get_confirmations(),
         }
@@ -285,9 +285,7 @@ impl AgentInstance {
             Self::Acp(m) => m.confirm(msg_id, call_id, data, always_allow),
             Self::Aionrs(m) => m.confirm(msg_id, call_id, data, always_allow),
             #[cfg(feature = "findesk")]
-            Self::Finclaw(_) => Err(AgentError::bad_request(
-                "Confirmations are not supported for FinClaw",
-            )),
+            Self::Finclaw(m) => m.confirm(msg_id, call_id, data, always_allow),
             #[cfg(any(test, feature = "test-support"))]
             Self::Mock(m) => m.confirm(msg_id, call_id, data, always_allow),
         }

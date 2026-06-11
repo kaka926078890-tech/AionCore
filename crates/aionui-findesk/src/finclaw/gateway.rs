@@ -136,10 +136,10 @@ impl FinclawGateway {
     }
 
     pub async fn shutdown(&self) {
-        if let Some(mut child) = self.child.lock().await.take() {
-            if let Err(error) = child.start_kill() {
-                warn!(?error, "finclaw serve kill failed");
-            }
+        if let Some(mut child) = self.child.lock().await.take()
+            && let Err(error) = child.start_kill()
+        {
+            warn!(?error, "finclaw serve kill failed");
         }
         *self.claw_port.lock().await = None;
     }

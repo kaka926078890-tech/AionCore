@@ -1,5 +1,5 @@
 use aionui_common::{CommandSpec, ErrorChain};
-use aionui_runtime::Builder as CmdBuilder;
+use aionui_runtime::{Builder as CmdBuilder, SpawnWrapperMode};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -26,8 +26,19 @@ impl CliAgentProcess {
     /// Background tasks are still spawned for:
     /// - stderr buffering
     /// - Process exit monitoring
-    pub async fn spawn_for_sdk(config: CommandSpec, data_dir: &Path) -> Result<Self, AgentError> {
+    pub async fn spawn_for_sdk(
+        config: CommandSpec,
+        data_dir: &Path,
+        backend: Option<&str>,
+    ) -> Result<Self, AgentError> {
         let mut cmd = CmdBuilder::new(&config.command);
+        #[cfg(feature = "findesk")]
+        if aionui_findesk::finsafe::finsafe_enabled() {
+            if let Some(backend) = backend.filter(|value| !value.is_empty()) {
+                cmd.backend(backend);
+            }
+            cmd.spawn_wrapper_mode(SpawnWrapperMode::ShortLived);
+        }
         let agent_env = aionui_runtime::agent_process_env().await;
         cmd.args(&config.args)
             .env_clear()
@@ -271,7 +282,9 @@ printf '%s\n' \
             value: "from-config".into(),
         });
 
-        let proc = CliAgentProcess::spawn_for_sdk(config, data_dir.path()).await.unwrap();
+        let proc = CliAgentProcess::spawn_for_sdk(config, data_dir.path(), None)
+            .await
+            .unwrap();
         let (_stdin, mut stdout) = proc.take_stdio().await.unwrap();
         let mut output = String::new();
         stdout.read_to_string(&mut output).await.unwrap();
@@ -327,7 +340,7 @@ printf '%s\n' \
     async fn spawn_for_sdk_take_stdio() {
         let config = simple_script_config("read line && echo \"$line\"");
         let tmp = std::env::temp_dir();
-        let proc = CliAgentProcess::spawn_for_sdk(config, &tmp).await.unwrap();
+        let proc = CliAgentProcess::spawn_for_sdk(config, &tmp, None).await.unwrap();
 
         let stdio = proc.take_stdio().await;
         assert!(stdio.is_some(), "First take_stdio should succeed");

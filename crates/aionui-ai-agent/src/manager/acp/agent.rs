@@ -269,7 +269,14 @@ impl AcpAgentManager {
         let initial_mode = initial_mode_from_params(&params);
         codex_sandbox::sync_for_agent(&params.metadata, initial_mode.as_ref().map(|m| m.as_str())).await;
 
-        let process = Arc::new(CliAgentProcess::spawn_for_sdk(params.command_spec.clone(), &params.data_dir).await?);
+        let process = Arc::new(
+            CliAgentProcess::spawn_for_sdk(
+                params.command_spec.clone(),
+                &params.data_dir,
+                params.metadata.backend.as_deref(),
+            )
+            .await?,
+        );
         register_session_process(
             &params.data_dir,
             Arc::clone(&process),
@@ -1061,7 +1068,9 @@ mod tests {
             cwd: None,
         };
         let data_dir = tempfile::tempdir().unwrap();
-        let proc = CliAgentProcess::spawn_for_sdk(config, data_dir.path()).await.unwrap();
+        let proc = CliAgentProcess::spawn_for_sdk(config, data_dir.path(), None)
+            .await
+            .unwrap();
         tokio::time::timeout(Duration::from_secs(5), proc.wait_for_exit())
             .await
             .unwrap();

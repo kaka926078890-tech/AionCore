@@ -247,7 +247,9 @@ pub(super) mod tests {
 
     pub(super) async fn spawn_sdk_test_process(config: CommandSpec) -> CliAgentProcess {
         let data_dir = tempfile::tempdir().unwrap();
-        CliAgentProcess::spawn_for_sdk(config, data_dir.path()).await.unwrap()
+        CliAgentProcess::spawn_for_sdk(config, data_dir.path(), None)
+            .await
+            .unwrap()
     }
 
     // ── trim_to_tail ─────────────────────────────────────────────────
@@ -344,7 +346,7 @@ pub(super) mod tests {
             cwd: Some(cwd_with_trailing_space.clone()),
         };
         let data_dir = tempfile::tempdir().unwrap();
-        let result = CliAgentProcess::spawn_for_sdk(config, data_dir.path()).await;
+        let result = CliAgentProcess::spawn_for_sdk(config, data_dir.path(), None).await;
         assert!(matches!(
             result,
             Err(AgentError::WorkspacePathRuntimeUnavailable(message)) if message == cwd_with_trailing_space
@@ -386,7 +388,9 @@ pub(super) mod tests {
             cwd: Some(cwd.to_string_lossy().into_owned()),
         };
 
-        let proc = CliAgentProcess::spawn_for_sdk(config, data_dir.path()).await.unwrap();
+        let proc = CliAgentProcess::spawn_for_sdk(config, data_dir.path(), None)
+            .await
+            .unwrap();
         proc.kill(Duration::from_millis(100)).await.unwrap();
     }
 
@@ -404,7 +408,7 @@ pub(super) mod tests {
         };
 
         let data_dir = tempfile::tempdir().unwrap();
-        let result = CliAgentProcess::spawn_for_sdk(config, data_dir.path()).await;
+        let result = CliAgentProcess::spawn_for_sdk(config, data_dir.path(), None).await;
         assert!(matches!(
             result,
             Err(AgentError::WorkspacePathRuntimeUnavailable(message))
@@ -427,7 +431,7 @@ pub(super) mod tests {
             cwd: Some(missing_cwd.to_string_lossy().into_owned()),
         };
 
-        let result = CliAgentProcess::spawn_for_sdk(config, data_dir.path()).await;
+        let result = CliAgentProcess::spawn_for_sdk(config, data_dir.path(), None).await;
         assert!(matches!(
             result,
             Err(AgentError::WorkspacePathRuntimeUnavailable(message))
@@ -445,7 +449,7 @@ pub(super) mod tests {
             cwd: None,
         };
         let data_dir = tempfile::tempdir().unwrap();
-        let result = CliAgentProcess::spawn_for_sdk(config, data_dir.path()).await;
+        let result = CliAgentProcess::spawn_for_sdk(config, data_dir.path(), None).await;
         assert!(result.is_err());
     }
 

@@ -2,9 +2,12 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use serde_json::{Value, json};
 
+use crate::finclaw::approval::{FinclawApprovalRequired, parse_approval_required};
+
 #[derive(Debug, Clone)]
 pub enum FinclawInferEvent {
     TextChunk(String),
+    ApprovalRequired(FinclawApprovalRequired),
     Finished,
     Error(String),
 }
@@ -82,6 +85,10 @@ fn parse_sse_frame(frame: &str) -> Option<FinclawInferEvent> {
         .unwrap_or("")
         .to_ascii_lowercase();
 
+    if let Some(approval) = parse_approval_event(&parsed, &event_type) {
+        return Some(FinclawInferEvent::ApprovalRequired(approval));
+    }
+
     match event_type.as_str() {
         "content" => {
             let delta = parsed
@@ -107,6 +114,23 @@ fn parse_sse_frame(frame: &str) -> Option<FinclawInferEvent> {
     }
 }
 
+fn parse_approval_event(parsed: &Value, event_type: &str) -> Option<FinclawApprovalRequired> {
+    if event_type == "approval_required" || event_type == "approval.required" {
+        return parse_approval_required(parsed);
+    }
+    if event_type == "custom" {
+        let name = parsed
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if name == "approval.required" {
+            return parse_approval_required(parsed);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +154,27 @@ mod tests {
         assert!(matches!(
             parse_sse_frame(frame),
             Some(FinclawInferEvent::Error(ref m)) if m == "boom"
+        ));
+    }
+
+    #[test]
+    fn parse_approval_required_event() {
+        let frame = "data: {\"type\":\"approval_required\",\"approval_request_id\":\"apr-1\",\"tool_name\":\"bash\",\"tool_call_id\":\"tc-1\"}\n";
+        let event = parse_sse_frame(frame).expect("approval");
+        assert!(matches!(
+            event,
+            FinclawInferEvent::ApprovalRequired(ref approval)
+                if approval.approval_request_id == "apr-1" && approval.tool_name == "bash"
+        ));
+    }
+
+    #[test]
+    fn parse_custom_approval_required_event() {
+        let frame = "data: {\"type\":\"CUSTOM\",\"name\":\"approval.required\",\"value\":{\"approval_request_id\":\"apr-2\",\"tool_name\":\"write\"}}\n";
+        let event = parse_sse_frame(frame).expect("approval");
+        assert!(matches!(
+            event,
+            FinclawInferEvent::ApprovalRequired(ref approval) if approval.approval_request_id == "apr-2"
         ));
     }
 }

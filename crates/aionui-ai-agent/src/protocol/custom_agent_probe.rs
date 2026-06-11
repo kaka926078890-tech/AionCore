@@ -100,7 +100,7 @@ async fn acp_initialize(
         cwd: Some(std::env::temp_dir().to_string_lossy().into_owned()),
     };
 
-    let proc = CliAgentProcess::spawn_for_sdk(spec, data_dir)
+    let proc = CliAgentProcess::spawn_for_sdk(spec, data_dir, None)
         .await
         .map_err(|e| format!("spawn failed: {e}"))?;
 
