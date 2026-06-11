@@ -45,9 +45,9 @@ impl CliAgentProcess {
             .envs(agent_env)
             .envs(Self::agent_spawn_env(data_dir))
             .envs(config.env.iter().map(|e| (&e.name, &e.value)))
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            .stdin_piped()
+            .stdout_piped()
+            .stderr_piped();
 
         if let Some(ref cwd) = config.cwd {
             cmd.current_dir(prepare_command_cwd(cwd)?);

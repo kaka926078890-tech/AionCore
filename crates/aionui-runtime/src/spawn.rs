@@ -47,14 +47,22 @@ enum Mode {
     CleanCli,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ExplicitStdio {
+    Piped,
+    Inherit,
+    Null,
+    Custom,
+}
+
 pub struct Builder {
     inner: Command,
     mode: Mode,
     backend: Option<String>,
     wrapper_mode: SpawnWrapperMode,
-    stdin_explicit: bool,
-    stdout_explicit: bool,
-    stderr_explicit: bool,
+    stdin_explicit: Option<ExplicitStdio>,
+    stdout_explicit: Option<ExplicitStdio>,
+    stderr_explicit: Option<ExplicitStdio>,
 }
 
 /// Force-kill a spawned child and wait for the direct child handle to exit.
@@ -112,9 +120,9 @@ impl Builder {
             mode: Mode::Default,
             backend: None,
             wrapper_mode: SpawnWrapperMode::None,
-            stdin_explicit: false,
-            stdout_explicit: false,
-            stderr_explicit: false,
+            stdin_explicit: None,
+            stdout_explicit: None,
+            stderr_explicit: None,
         }
     }
 
@@ -141,9 +149,9 @@ impl Builder {
             mode: Mode::CleanCli,
             backend: None,
             wrapper_mode: SpawnWrapperMode::None,
-            stdin_explicit: false,
-            stdout_explicit: false,
-            stderr_explicit: false,
+            stdin_explicit: Some(ExplicitStdio::Null),
+            stdout_explicit: Some(ExplicitStdio::Piped),
+            stderr_explicit: Some(ExplicitStdio::Piped),
         }
     }
 
@@ -163,9 +171,9 @@ impl Builder {
             mode: Mode::Default,
             backend: None,
             wrapper_mode: SpawnWrapperMode::None,
-            stdin_explicit: false,
-            stdout_explicit: false,
-            stderr_explicit: false,
+            stdin_explicit: None,
+            stdout_explicit: None,
+            stderr_explicit: None,
         }
     }
 
@@ -230,20 +238,74 @@ impl Builder {
     }
 
     pub fn stdin<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Self {
-        self.stdin_explicit = true;
+        self.stdin_explicit = Some(ExplicitStdio::Custom);
         self.inner.stdin(cfg);
         self
     }
 
     pub fn stdout<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Self {
-        self.stdout_explicit = true;
+        self.stdout_explicit = Some(ExplicitStdio::Custom);
         self.inner.stdout(cfg);
         self
     }
 
     pub fn stderr<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Self {
-        self.stderr_explicit = true;
+        self.stderr_explicit = Some(ExplicitStdio::Custom);
         self.inner.stderr(cfg);
+        self
+    }
+
+    pub fn stdin_piped(&mut self) -> &mut Self {
+        self.stdin_explicit = Some(ExplicitStdio::Piped);
+        self.inner.stdin(Stdio::piped());
+        self
+    }
+
+    pub fn stdout_piped(&mut self) -> &mut Self {
+        self.stdout_explicit = Some(ExplicitStdio::Piped);
+        self.inner.stdout(Stdio::piped());
+        self
+    }
+
+    pub fn stderr_piped(&mut self) -> &mut Self {
+        self.stderr_explicit = Some(ExplicitStdio::Piped);
+        self.inner.stderr(Stdio::piped());
+        self
+    }
+
+    pub fn stdin_inherit(&mut self) -> &mut Self {
+        self.stdin_explicit = Some(ExplicitStdio::Inherit);
+        self.inner.stdin(Stdio::inherit());
+        self
+    }
+
+    pub fn stdout_inherit(&mut self) -> &mut Self {
+        self.stdout_explicit = Some(ExplicitStdio::Inherit);
+        self.inner.stdout(Stdio::inherit());
+        self
+    }
+
+    pub fn stderr_inherit(&mut self) -> &mut Self {
+        self.stderr_explicit = Some(ExplicitStdio::Inherit);
+        self.inner.stderr(Stdio::inherit());
+        self
+    }
+
+    pub fn stdin_null(&mut self) -> &mut Self {
+        self.stdin_explicit = Some(ExplicitStdio::Null);
+        self.inner.stdin(Stdio::null());
+        self
+    }
+
+    pub fn stdout_null(&mut self) -> &mut Self {
+        self.stdout_explicit = Some(ExplicitStdio::Null);
+        self.inner.stdout(Stdio::null());
+        self
+    }
+
+    pub fn stderr_null(&mut self) -> &mut Self {
+        self.stderr_explicit = Some(ExplicitStdio::Null);
+        self.inner.stderr(Stdio::null());
         self
     }
 
@@ -315,15 +377,9 @@ impl Builder {
                 .env("NO_COLOR", "1")
                 .env("TERM", "dumb");
         } else {
-            if self.stdin_explicit {
-                self.inner.stdin(Stdio::piped());
-            }
-            if self.stdout_explicit {
-                self.inner.stdout(Stdio::piped());
-            }
-            if self.stderr_explicit {
-                self.inner.stderr(Stdio::piped());
-            }
+            reapply_explicit_stdio(&mut self.inner, self.stdin_explicit, StreamKind::Stdin);
+            reapply_explicit_stdio(&mut self.inner, self.stdout_explicit, StreamKind::Stdout);
+            reapply_explicit_stdio(&mut self.inner, self.stderr_explicit, StreamKind::Stderr);
         }
         if let Some(dir) = cwd {
             self.inner.current_dir(dir);
@@ -334,6 +390,36 @@ impl Builder {
                 .map(|(key, value)| (OsString::from(key), OsString::from(value))),
         );
         self.inner.args(args);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum StreamKind {
+    Stdin,
+    Stdout,
+    Stderr,
+}
+
+fn reapply_explicit_stdio(cmd: &mut Command, explicit: Option<ExplicitStdio>, stream: StreamKind) {
+    match explicit {
+        Some(ExplicitStdio::Piped) => apply_stdio(cmd, stream, Stdio::piped()),
+        Some(ExplicitStdio::Inherit) => apply_stdio(cmd, stream, Stdio::inherit()),
+        Some(ExplicitStdio::Null) => apply_stdio(cmd, stream, Stdio::null()),
+        Some(ExplicitStdio::Custom) | None => {}
+    }
+}
+
+fn apply_stdio(cmd: &mut Command, stream: StreamKind, stdio: Stdio) {
+    match stream {
+        StreamKind::Stdin => {
+            cmd.stdin(stdio);
+        }
+        StreamKind::Stdout => {
+            cmd.stdout(stdio);
+        }
+        StreamKind::Stderr => {
+            cmd.stderr(stdio);
+        }
     }
 }
 
@@ -755,9 +841,9 @@ mod tests {
         builder
             .arg("-c")
             .arg("echo piped")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stdin_piped()
+            .stdout_piped()
+            .stderr_piped();
 
         let mut child = builder.spawn().expect("spawn with wrapped policy");
         assert!(
