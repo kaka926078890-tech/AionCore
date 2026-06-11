@@ -23,15 +23,17 @@
 //! once at process startup by [`crate::enhance_process_path`]; Builder
 //! does not re-inject it.
 
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use tokio::process::{Child, Command};
 
 use crate::ResolvedCommand;
 use crate::resolver::resolve_command_path;
+use crate::spawn_policy::{SpawnIntent, SpawnWrapperMode, apply_spawn_policies};
 
 struct ProgramPlan {
     program: OsString,
@@ -48,6 +50,8 @@ enum Mode {
 pub struct Builder {
     inner: Command,
     mode: Mode,
+    backend: Option<String>,
+    wrapper_mode: SpawnWrapperMode,
 }
 
 /// Force-kill a spawned child and wait for the direct child handle to exit.
@@ -103,6 +107,8 @@ impl Builder {
         Self {
             inner,
             mode: Mode::Default,
+            backend: None,
+            wrapper_mode: SpawnWrapperMode::None,
         }
     }
 
@@ -127,6 +133,8 @@ impl Builder {
         Self {
             inner,
             mode: Mode::CleanCli,
+            backend: None,
+            wrapper_mode: SpawnWrapperMode::None,
         }
     }
 
@@ -144,7 +152,21 @@ impl Builder {
         Self {
             inner,
             mode: Mode::Default,
+            backend: None,
+            wrapper_mode: SpawnWrapperMode::None,
         }
+    }
+
+    /// Optional backend id for spawn policies (e.g. `"finclaw"`, `"claude"`).
+    pub fn backend<S: Into<String>>(&mut self, backend: S) -> &mut Self {
+        self.backend = Some(backend.into());
+        self
+    }
+
+    /// Hint for spawn policies about how the child should be wrapped.
+    pub fn spawn_wrapper_mode(&mut self, mode: SpawnWrapperMode) -> &mut Self {
+        self.wrapper_mode = mode;
+        self
     }
 
     pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
@@ -212,12 +234,81 @@ impl Builder {
 
     /// Spawn the process and return the standard `tokio::process::Child`.
     pub fn spawn(mut self) -> io::Result<Child> {
+        self.apply_spawn_policies();
         self.inner.spawn()
     }
 
     /// Run to completion and collect stdout/stderr.
     pub async fn output(mut self) -> io::Result<std::process::Output> {
+        self.apply_spawn_policies();
         self.inner.output().await
+    }
+
+    fn apply_spawn_policies(&mut self) {
+        let intent = self.collect_spawn_intent();
+        let resolved = apply_spawn_policies(&intent);
+        if resolved.program == intent.program
+            && resolved.args == intent.args
+            && resolved.cwd == intent.cwd
+            && resolved.child_env == intent.child_env
+        {
+            return;
+        }
+        self.rebuild_from_resolved(&resolved);
+    }
+
+    fn collect_spawn_intent(&self) -> SpawnIntent {
+        let std_cmd = self.inner.as_std();
+        let program = std_cmd.get_program().to_os_string();
+        let args = std_cmd.get_args().map(OsString::from).collect();
+        let cwd = std_cmd.get_current_dir().map(PathBuf::from);
+        let child_env = std_cmd
+            .get_envs()
+            .filter_map(|(key, value)| {
+                let value = value?;
+                Some((
+                    key.to_string_lossy().into_owned(),
+                    value.to_string_lossy().into_owned(),
+                ))
+            })
+            .collect::<HashMap<String, String>>();
+
+        SpawnIntent {
+            backend: self.backend.clone(),
+            program,
+            args,
+            cwd,
+            child_env,
+            wrapper_mode: self.wrapper_mode,
+        }
+    }
+
+    fn rebuild_from_resolved(&mut self, resolved: &crate::spawn_policy::ResolvedSpawn) {
+        let cwd = resolved.cwd.clone();
+        let child_env = resolved.child_env.clone();
+        let args = resolved.args.clone();
+
+        self.inner = command_from_resolved_program(resolved.program.as_os_str());
+        self.inner.kill_on_drop(true);
+        configure_platform_spawn(&mut self.inner);
+        strip_pollution(&mut self.inner);
+        if let Mode::CleanCli = self.mode {
+            self.inner
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .env("NO_COLOR", "1")
+                .env("TERM", "dumb");
+        }
+        if let Some(dir) = cwd {
+            self.inner.current_dir(dir);
+        }
+        self.inner.envs(
+            child_env
+                .iter()
+                .map(|(key, value)| (OsString::from(key), OsString::from(value))),
+        );
+        self.inner.args(args);
     }
 }
 

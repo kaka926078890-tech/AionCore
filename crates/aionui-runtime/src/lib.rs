@@ -37,7 +37,11 @@ pub use node_runtime::{
 pub use resolver::{ResolveError, bun_bin_dir, resolve_bun, resolve_command_in, resolve_command_path};
 pub use shell_env::enhance_process_path;
 mod spawn;
+mod spawn_policy;
 pub use spawn::{Builder, kill_process_tree};
+pub use spawn_policy::{
+    SpawnIntent, SpawnPolicy, SpawnWrapperMode, apply_spawn_policies, register_spawn_policy,
+};
 
 #[cfg(test)]
 #[path = "../build_support.rs"]
