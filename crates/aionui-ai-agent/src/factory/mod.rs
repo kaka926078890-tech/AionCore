@@ -3,6 +3,8 @@ pub mod acp_assembler;
 mod acp;
 pub(crate) mod aionrs;
 mod context;
+#[cfg(feature = "findesk")]
+mod finclaw;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -68,6 +70,12 @@ async fn build_agent(deps: Arc<AgentFactoryDeps>, options: BuildTaskOptions) -> 
     match context.kind {
         AgentSessionKind::Acp(acp_context) => acp::build(deps, *acp_context, ctx).await,
         AgentSessionKind::Aionrs(aionrs_context) => aionrs::build(deps, *aionrs_context, model, ctx).await,
+        #[cfg(feature = "findesk")]
+        AgentSessionKind::Finclaw(finclaw_context) => finclaw::build(*finclaw_context, ctx).await,
+        #[cfg(not(feature = "findesk"))]
+        AgentSessionKind::Finclaw(_) => Err(AgentError::bad_request(
+            "FinClaw agent requires the findesk feature",
+        )),
     }
 }
 

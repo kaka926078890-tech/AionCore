@@ -106,6 +106,33 @@ fn default_aionrs_max_tokens() -> u32 {
     8192
 }
 
+/// FinClaw-specific fields extracted from `conversation.extra`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FinclawBuildExtra {
+    #[serde(default)]
+    pub workspace: Option<String>,
+    #[serde(default, rename = "customWorkspace")]
+    pub custom_workspace: Option<bool>,
+    #[serde(default)]
+    pub backend: Option<String>,
+    #[serde(default, rename = "agentName")]
+    pub agent_name: Option<String>,
+    #[serde(default, rename = "cliPath")]
+    pub cli_path: Option<String>,
+    #[serde(default, rename = "finclawProfile")]
+    pub finclaw_profile: Option<String>,
+    #[serde(default, rename = "finclawSecurityMode")]
+    pub finclaw_security_mode: Option<String>,
+    #[serde(default, rename = "finclawToolPolicy")]
+    pub finclaw_tool_policy: Option<String>,
+    #[serde(default, rename = "sessionMode")]
+    pub session_mode: Option<String>,
+    #[serde(default, rename = "maxTokens")]
+    pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub user_id: Option<String>,
+}
+
 /// ACP model information returned by the ACP backend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcpModelInfo {

@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [features]
 default = ["telegram", "lark", "dingtalk", "weixin"]
-findesk = ["aionui-findesk", "aionui-system/findesk"]
+findesk = ["aionui-findesk", "aionui-ai-agent/findesk", "aionui-system/findesk"]
 telegram = ["aionui-channel/telegram"]
 lark = ["aionui-channel/lark"]
 dingtalk = ["aionui-channel/dingtalk"]

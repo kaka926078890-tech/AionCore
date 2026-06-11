@@ -1,4 +1,4 @@
-use aionui_api_types::{AcpBuildExtra, AionrsBuildExtra};
+use aionui_api_types::{AcpBuildExtra, AionrsBuildExtra, FinclawBuildExtra};
 use aionui_common::{AgentType, ProviderWithModel};
 
 use crate::shared_kernel::PersistedSessionState;
@@ -40,6 +40,7 @@ pub struct WorkspaceContext {
 pub enum AgentSessionKind {
     Acp(Box<AcpSessionBuildContext>),
     Aionrs(Box<AionrsSessionBuildContext>),
+    Finclaw(Box<FinclawSessionBuildContext>),
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +55,11 @@ pub struct AcpSessionBuildContext {
 pub struct AionrsSessionBuildContext {
     pub config: AionrsBuildExtra,
     pub belongs_to_team: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct FinclawSessionBuildContext {
+    pub config: FinclawBuildExtra,
 }
 
 impl AgentSessionContext {

@@ -3,6 +3,7 @@
 mod config;
 mod register;
 
+pub mod finclaw;
 pub mod finsafe;
 
 pub use config::FindeskConfig;

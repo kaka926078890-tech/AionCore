@@ -26,6 +26,8 @@ pub enum AgentType {
     Codex,
     /// FinDesk Hub cloud tasks — conversation metadata only; agent runs in the desktop renderer.
     Cloud,
+    /// FinClaw agent — `finclaw serve` loopback HTTP/SSE runtime (FinDesk).
+    Finclaw,
 }
 
 impl AgentType {
@@ -39,6 +41,7 @@ impl AgentType {
             AgentType::Gemini => "Gemini (legacy)",
             AgentType::Codex => "Codex (legacy)",
             AgentType::Cloud => "Cloud",
+            AgentType::Finclaw => "FinClaw",
         }
     }
 
@@ -52,11 +55,15 @@ impl AgentType {
             AgentType::Gemini => "gemini",
             AgentType::Codex => "codex",
             AgentType::Cloud => "cloud",
+            AgentType::Finclaw => "finclaw",
         }
     }
 
     pub fn supports_new_conversation(&self) -> bool {
-        matches!(self, AgentType::Acp | AgentType::Aionrs | AgentType::Cloud)
+        matches!(
+            self,
+            AgentType::Acp | AgentType::Aionrs | AgentType::Cloud | AgentType::Finclaw
+        )
     }
 
     pub fn is_deprecated_runtime(&self) -> bool {
@@ -88,6 +95,7 @@ impl AgentType {
     pub fn native_skills_dirs(&self) -> Option<&'static [&'static str]> {
         match self {
             AgentType::Aionrs => Some(&[".aionrs/skills"]),
+            AgentType::Finclaw => Some(&[".finclaw/skills"]),
             AgentType::Acp
             | AgentType::OpenclawGateway
             | AgentType::Nanobot
@@ -121,6 +129,7 @@ impl AgentType {
                 _ => "yolo",
             },
             AgentType::Aionrs
+            | AgentType::Finclaw
             | AgentType::Gemini
             | AgentType::Codex
             | AgentType::OpenclawGateway

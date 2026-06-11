@@ -2040,7 +2040,7 @@ impl ConversationService {
     ) -> Result<McpSupportPolicy, ConversationError> {
         match agent_type {
             AgentType::Acp => resolve_acp_mcp_support_policy(&self.agent_metadata_repo, extra).await,
-            AgentType::Aionrs => Ok(McpSupportPolicy::AIONRS),
+            AgentType::Aionrs | AgentType::Finclaw => Ok(McpSupportPolicy::AIONRS),
             _ => Ok(McpSupportPolicy::AIONRS),
         }
     }

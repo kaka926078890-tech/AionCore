@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use aionui_ai_agent::session_context::{
-    AcpSessionBuildContext, AgentSessionContext, AgentSessionKind, AionrsSessionBuildContext, ConversationContext,
-    WorkspaceContext,
+    AcpSessionBuildContext, AgentSessionContext, AgentSessionKind, AionrsSessionBuildContext,
+    FinclawSessionBuildContext, ConversationContext, WorkspaceContext,
 };
 use aionui_ai_agent::shared_kernel::{ConfigKey, ConfigValue, ModeId, ModelId, PersistedSessionState};
 use aionui_ai_agent::types::BuildTaskOptions;
-use aionui_api_types::{AcpBuildExtra, AionrsBuildExtra};
+use aionui_api_types::{AcpBuildExtra, AionrsBuildExtra, FinclawBuildExtra};
 use aionui_common::{AgentType, WorkspacePathValidationError, validate_workspace_path_availability};
 use aionui_db::models::ConversationRow;
 use aionui_db::{IAcpSessionRepository, IAgentMetadataRepository};
@@ -156,6 +156,7 @@ impl<'a> SessionContextBuilder<'a> {
                 .await
                 .map(|context| AgentSessionKind::Acp(Box::new(context))),
             AgentType::Aionrs => Ok(AgentSessionKind::Aionrs(Box::new(build_aionrs_context(row, extra)))),
+            AgentType::Finclaw => Ok(AgentSessionKind::Finclaw(Box::new(build_finclaw_context(row, extra)))),
             AgentType::Cloud => Err(ConversationError::BadRequest {
                 reason: "Cloud conversations are executed in the desktop renderer; use FinDesk cloud runtime."
                     .into(),
@@ -295,6 +296,22 @@ impl<'a> SessionContextBuilder<'a> {
         }
         Ok(snapshot)
     }
+}
+
+fn build_finclaw_context(row: &ConversationRow, extra: serde_json::Value) -> FinclawSessionBuildContext {
+    let mut config: FinclawBuildExtra = match serde_json::from_value(extra.clone()) {
+        Ok(config) => config,
+        Err(err) => {
+            warn!(
+                conversation_id = %row.id,
+                error = %err,
+                "session_context: invalid finclaw extra; using defaults"
+            );
+            FinclawBuildExtra::default()
+        }
+    };
+    config.user_id.get_or_insert_with(|| row.user_id.clone());
+    FinclawSessionBuildContext { config }
 }
 
 fn build_aionrs_context(row: &ConversationRow, extra: serde_json::Value) -> AionrsSessionBuildContext {
