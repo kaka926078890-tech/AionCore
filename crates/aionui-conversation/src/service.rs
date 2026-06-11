@@ -336,6 +336,11 @@ impl ConversationService {
 
         let mut extra = req.extra;
 
+        if req.r#type == AgentType::Cloud {
+            extra["workspace"] = serde_json::Value::String(String::new());
+            extra["is_temporary_workspace"] = serde_json::json!(true);
+        }
+
         // aionrs source-of-truth rule: top-level `model` wins. If an older client
         // still packs `extra.model`, strip it before persist so the stored row
         // has a single canonical model representation.
@@ -364,7 +369,7 @@ impl ConversationService {
             extra["workspace"] = serde_json::Value::String(workspace.clone());
         }
 
-        let auto_provisioned_workspace = if user_supplied_workspace.is_none() {
+        let auto_provisioned_workspace = if user_supplied_workspace.is_none() && req.r#type != AgentType::Cloud {
             // Per-conversation temp workspaces live under
             // `{data_dir}/conversations/{label}-temp-{id}/`. The label lets
             // operators eyeball the agent type; the conversation id keeps
@@ -1470,6 +1475,14 @@ impl ConversationService {
                 "created_at": user_msg.created_at,
             }),
         ));
+
+        if parse_agent_type_from_row(&row) == Some(AgentType::Cloud) {
+            let mut turn_claim = turn_claim;
+            let was_deleting = turn_claim.release();
+            self.complete_released_turn(conversation_id, &turn_id, was_deleting)
+                .await;
+            return Ok(self.send_message_response(conversation_id, user_msg_id, turn_id).await);
+        }
 
         // Build task options from conversation row
         let build_opts = match self.build_task_options(&row).await {

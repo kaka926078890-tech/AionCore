@@ -156,6 +156,10 @@ impl<'a> SessionContextBuilder<'a> {
                 .await
                 .map(|context| AgentSessionKind::Acp(Box::new(context))),
             AgentType::Aionrs => Ok(AgentSessionKind::Aionrs(Box::new(build_aionrs_context(row, extra)))),
+            AgentType::Cloud => Err(ConversationError::BadRequest {
+                reason: "Cloud conversations are executed in the desktop renderer; use FinDesk cloud runtime."
+                    .into(),
+            }),
             AgentType::Gemini
             | AgentType::Codex
             | AgentType::OpenclawGateway

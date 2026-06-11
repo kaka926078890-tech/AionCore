@@ -24,6 +24,8 @@ pub enum AgentType {
     /// message history. New Codex conversations use `AgentType::Acp` with
     /// `backend='codex'`.
     Codex,
+    /// FinDesk Hub cloud tasks — conversation metadata only; agent runs in the desktop renderer.
+    Cloud,
 }
 
 impl AgentType {
@@ -36,6 +38,7 @@ impl AgentType {
             AgentType::Aionrs => "Aion CLI",
             AgentType::Gemini => "Gemini (legacy)",
             AgentType::Codex => "Codex (legacy)",
+            AgentType::Cloud => "Cloud",
         }
     }
 
@@ -48,11 +51,12 @@ impl AgentType {
             AgentType::Aionrs => "aionrs",
             AgentType::Gemini => "gemini",
             AgentType::Codex => "codex",
+            AgentType::Cloud => "cloud",
         }
     }
 
     pub fn supports_new_conversation(&self) -> bool {
-        matches!(self, AgentType::Acp | AgentType::Aionrs)
+        matches!(self, AgentType::Acp | AgentType::Aionrs | AgentType::Cloud)
     }
 
     pub fn is_deprecated_runtime(&self) -> bool {
@@ -89,7 +93,8 @@ impl AgentType {
             | AgentType::Nanobot
             | AgentType::Remote
             | AgentType::Gemini
-            | AgentType::Codex => None,
+            | AgentType::Codex
+            | AgentType::Cloud => None,
         }
     }
 
@@ -120,7 +125,8 @@ impl AgentType {
             | AgentType::Codex
             | AgentType::OpenclawGateway
             | AgentType::Nanobot
-            | AgentType::Remote => "yolo",
+            | AgentType::Remote
+            | AgentType::Cloud => "yolo",
         }
     }
 }
