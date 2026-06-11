@@ -127,12 +127,16 @@ impl FinclawGateway {
         for _ in 0..120 {
             if let Some(port) = read_claw_port(&self.config.profile)
                 && probe_claw_health(port).await
+                && probe_claw_real_llm_ready(port).await
             {
                 return Ok(port);
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        Err("timed out waiting for finclaw port.json".into())
+        Err(
+            "timed out waiting for finclaw serve with a non-mock LLM provider; configure finclaw models"
+                .into(),
+        )
     }
 
     pub async fn shutdown(&self) {

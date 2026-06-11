@@ -25,7 +25,8 @@ pub use host_context::{HostAgentRow, resolve_finclaw_host_context};
 pub use infer::{post_infer_stream, FinclawInferEvent};
 pub use policy_profile::{
     FinclawToolPolicy, apply_tool_policy_from_extra, apply_tool_policy_serve_overlay, finclaw_preset_to_tool_policy,
-    finclaw_tool_policy_to_preset, is_finclaw_tool_policy, resolve_finclaw_tool_policy_display,
+    finclaw_tool_policy_to_preset, finclaw_tool_policy_to_wire, is_finclaw_tool_policy,
+    read_tool_policy_from_serve_overlay, resolve_finclaw_tool_policy_display,
 };
 pub use port_json::{
     probe_claw_health, probe_claw_real_llm_ready, read_claw_port, read_port_json, resolve_port_json_path,

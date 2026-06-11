@@ -81,7 +81,10 @@ pub use cron::{
 pub use custom_agent::{
     CustomAgentAdvancedOverrides, CustomAgentUpsertRequest, DeleteCustomAgentResponse, SetEnabledRequest,
 };
-pub use finclaw::{FinclawHostClaw, FinclawHostContext, FinclawHostUser, FinclawToolPolicySnapshot};
+pub use finclaw::{
+    FinclawApplyToolPolicyRequest, FinclawApplyToolPolicyResponse, FinclawGetToolPolicyQuery, FinclawHostClaw,
+    FinclawHostContext, FinclawHostUser, FinclawToolPolicyResponse, FinclawToolPolicySnapshot,
+};
 pub use extension::{
     DisableExtensionRequest, EnableExtensionRequest, ExtensionSummaryResponse, GetI18nRequest, GetPermissionsRequest,
     GetRiskLevelRequest, HubExtensionListItem, HubExtensionListResponse, HubOperationResponse, HubUpdateInfo,

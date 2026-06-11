@@ -120,6 +120,10 @@ fn finclaw_read_write(ctx: &ProfileContext, config: &FindeskConfig) -> Vec<PathB
 
 fn hermes_read_only(ctx: &ProfileContext) -> Vec<PathBuf> {
     let mut paths = system_read_only();
+    // Hermes is commonly installed via uv/pip into ~/.local/bin.
+    paths.push(join_home(&ctx.home_dir, ".local/bin"));
+    #[cfg(target_os = "macos")]
+    paths.push(PathBuf::from("/opt/homebrew/bin"));
     paths.push(join_home(&ctx.home_dir, ".config"));
     paths.push(join_home(&ctx.home_dir, ".hermes"));
     paths.push(join_home(&ctx.home_dir, ".local/share/uv"));
@@ -215,6 +219,29 @@ mod tests {
         assert_eq!(resolve_profile_id("claude"), "npx-bun-acp");
         assert_eq!(resolve_profile_id("openclaw-gateway"), "openclaw");
         assert_eq!(resolve_profile_id("nanobot"), "nanobot");
+    }
+
+    #[test]
+    fn hermes_read_only_includes_local_bin_for_uv_install() {
+        let ctx = ProfileContext {
+            backend: "hermes".into(),
+            home_dir: PathBuf::from("/Users/tester"),
+            cwd: Some(PathBuf::from("/tmp/ws")),
+            executable: PathBuf::from("/Users/tester/.local/bin/hermes"),
+        };
+        let config = FindeskConfig {
+            finsafe_bin: None,
+            finsafe_policies_dir: None,
+            finclaw_bin: None,
+            cache_dir: None,
+            work_dir: None,
+            log_dir: None,
+        };
+        let paths = resolve_read_only_paths(&ctx, &config);
+        assert!(
+            paths.contains(&PathBuf::from("/Users/tester/.local/bin")),
+            "hermes sandbox must allow ~/.local/bin, got {paths:?}"
+        );
     }
 }
 

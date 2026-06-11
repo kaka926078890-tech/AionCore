@@ -34,6 +34,36 @@ pub struct FinclawToolPolicySnapshot {
     pub profile: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FinclawGetToolPolicyQuery {
+    pub workspace: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FinclawToolPolicyResponse {
+    pub tool_policy: String,
+    pub pool_ref_count: usize,
+    pub profile: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FinclawApplyToolPolicyRequest {
+    pub workspace: String,
+    pub tool_policy: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FinclawApplyToolPolicyResponse {
+    pub tool_policy: String,
+    pub pool_ref_count: usize,
+    pub profile: String,
+    pub restarted: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

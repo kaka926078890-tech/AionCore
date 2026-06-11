@@ -10,16 +10,21 @@
 
 use axum::Router;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Extension, Json, Path, State};
+use axum::extract::{Extension, Json, Path, Query, State};
 use axum::routing::{get, patch, post, put};
+use std::path::PathBuf;
 
 use aionui_api_types::{
     AcpHealthCheckRequest, AcpHealthCheckResponse, AgentMetadata, ApiResponse, CustomAgentUpsertRequest,
-    DeleteCustomAgentResponse, FinclawHostContext, FinclawHostUser, ProviderHealthCheckRequest,
+    DeleteCustomAgentResponse, FinclawApplyToolPolicyRequest, FinclawApplyToolPolicyResponse, FinclawGetToolPolicyQuery,
+    FinclawHostContext, FinclawHostUser, FinclawToolPolicyResponse, ProviderHealthCheckRequest,
     ProviderHealthCheckResponse, SetEnabledRequest, TryConnectCustomAgentRequest, TryConnectCustomAgentResponse,
 };
 #[cfg(feature = "findesk")]
-use aionui_findesk::finclaw::{HostAgentRow, resolve_finclaw_host_context};
+use aionui_findesk::finclaw::{
+    FinclawToolPolicy, HostAgentRow, apply_tool_policy_serve_overlay, finclaw_tool_policy_to_wire,
+    is_finclaw_tool_policy, read_tool_policy_from_serve_overlay, resolve_finclaw_host_context, shared_gateway_pool,
+};
 use aionui_auth::CurrentUser;
 use aionui_common::ApiError;
 
@@ -38,7 +43,10 @@ pub fn agent_routes(state: AgentRouterState) -> Router {
         .route("/api/agents/custom/try-connect", post(try_connect_custom));
 
     #[cfg(feature = "findesk")]
-    let router = router.route("/api/agents/finclaw/host-context", get(finclaw_host_context));
+    let router = router
+        .route("/api/agents/finclaw/host-context", get(finclaw_host_context))
+        .route("/api/agents/finclaw/tool-policy", get(finclaw_get_tool_policy))
+        .route("/api/agents/finclaw/apply-tool-policy", post(finclaw_apply_tool_policy));
 
     router.with_state(state)
 }
@@ -67,6 +75,70 @@ async fn finclaw_host_context(
     });
 
     Ok(Json(ApiResponse::ok(context)))
+}
+
+#[cfg(feature = "findesk")]
+async fn finclaw_get_tool_policy(
+    Extension(_user): Extension<CurrentUser>,
+    Query(query): Query<FinclawGetToolPolicyQuery>,
+) -> Result<Json<ApiResponse<FinclawToolPolicyResponse>>, ApiError> {
+    let workspace = query.workspace.trim();
+    if workspace.is_empty() {
+        return Err(ApiError::BadRequest("workspace is required".into()));
+    }
+    let profile = query
+        .profile
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("default")
+        .to_string();
+    let serve_cwd = PathBuf::from(workspace);
+    let policy = read_tool_policy_from_serve_overlay(&serve_cwd).unwrap_or(FinclawToolPolicy::Auto);
+    let pool_ref_count = shared_gateway_pool()
+        .ref_count_for(&profile, &serve_cwd)
+        .await;
+
+    Ok(Json(ApiResponse::ok(FinclawToolPolicyResponse {
+        tool_policy: finclaw_tool_policy_to_wire(policy).to_string(),
+        pool_ref_count,
+        profile,
+    })))
+}
+
+#[cfg(feature = "findesk")]
+async fn finclaw_apply_tool_policy(
+    Extension(_user): Extension<CurrentUser>,
+    body: Result<Json<FinclawApplyToolPolicyRequest>, JsonRejection>,
+) -> Result<Json<ApiResponse<FinclawApplyToolPolicyResponse>>, ApiError> {
+    let Json(req) = body.map_err(ApiError::from)?;
+    let workspace = req.workspace.trim();
+    if workspace.is_empty() {
+        return Err(ApiError::BadRequest("workspace is required".into()));
+    }
+    if !is_finclaw_tool_policy(&req.tool_policy) {
+        return Err(ApiError::BadRequest("invalid finclaw tool_policy".into()));
+    }
+
+    let profile = req
+        .profile
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("default")
+        .to_string();
+    let serve_cwd = PathBuf::from(workspace);
+
+    apply_tool_policy_serve_overlay(&serve_cwd, &req.tool_policy).map_err(ApiError::BadRequest)?;
+
+    let (restarted, pool_ref_count) = shared_gateway_pool()
+        .restart_gateway(&profile, &serve_cwd)
+        .await;
+
+    Ok(Json(ApiResponse::ok(FinclawApplyToolPolicyResponse {
+        tool_policy: req.tool_policy,
+        pool_ref_count,
+        profile,
+        restarted,
+    })))
 }
 
 async fn list_agents(

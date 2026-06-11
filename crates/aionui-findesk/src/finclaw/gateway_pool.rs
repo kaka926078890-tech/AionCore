@@ -81,6 +81,21 @@ impl FinclawGatewayPool {
             .map(|entry| entry.ref_count)
             .sum()
     }
+
+    /// Shut down the pooled gateway for `profile` + `serve_cwd` so the next acquire respawns with fresh config.
+    /// Returns `(restarted, ref_count_before_restart)`.
+    pub async fn restart_gateway(&self, profile: &str, serve_cwd: &Path) -> (bool, usize) {
+        let key = pool_key(profile, serve_cwd);
+        let mut entries = self.entries.lock().await;
+        let Some(entry) = entries.remove(&key) else {
+            return (false, 0);
+        };
+        let ref_count = entry.ref_count;
+        let gateway = Arc::clone(&entry.gateway);
+        drop(entries);
+        gateway.shutdown().await;
+        (true, ref_count)
+    }
 }
 
 static SHARED_POOL: OnceLock<FinclawGatewayPool> = OnceLock::new();
@@ -126,6 +141,26 @@ mod tests {
         assert_eq!(pool.ref_count_for("default", dir.path()).await, 1);
 
         pool.release("default", dir.path()).await;
+        assert_eq!(pool.ref_count_for("default", dir.path()).await, 0);
+    }
+
+    #[tokio::test]
+    async fn restart_gateway_removes_entry_and_zeros_ref_count() {
+        let pool = FinclawGatewayPool::new(FindeskConfig::from_env());
+        let dir = tempdir().unwrap();
+        let config = FinclawGatewayConfig {
+            cli_path: None,
+            profile: "default".into(),
+            security_mode: None,
+            serve_cwd: dir.path().to_path_buf(),
+        };
+
+        pool.acquire(config).await;
+        assert_eq!(pool.ref_count_for("default", dir.path()).await, 1);
+
+        let (restarted, refs) = pool.restart_gateway("default", dir.path()).await;
+        assert!(restarted);
+        assert_eq!(refs, 1);
         assert_eq!(pool.ref_count_for("default", dir.path()).await, 0);
     }
 

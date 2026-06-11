@@ -90,6 +90,30 @@ pub fn apply_tool_policy_from_extra(
     apply_tool_policy_serve_overlay(workspace, policy)
 }
 
+/// Read `presets.tool` from workspace serve overlay when present.
+pub fn read_tool_policy_from_serve_overlay(workspace: &Path) -> Option<FinclawToolPolicy> {
+    let config_path = workspace.join(".finclaw/aionui-serve-config.yaml");
+    if !config_path.is_file() {
+        return None;
+    }
+    let body = std::fs::read_to_string(&config_path).ok()?;
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if let Some(preset) = trimmed.strip_prefix("tool:").map(str::trim) {
+            return finclaw_preset_to_tool_policy(preset);
+        }
+    }
+    None
+}
+
+pub fn finclaw_tool_policy_to_wire(policy: FinclawToolPolicy) -> &'static str {
+    match policy {
+        FinclawToolPolicy::Supervised => "supervised",
+        FinclawToolPolicy::Auto => "auto",
+        FinclawToolPolicy::Readonly => "readonly",
+    }
+}
+
 fn replace_yaml_scalar(body: &str, key: &str, value: &str) -> String {
     let mut lines: Vec<String> = body.lines().map(str::to_string).collect();
     for line in &mut lines {
@@ -133,5 +157,15 @@ mod tests {
         let body = std::fs::read_to_string(dir.path().join(".finclaw/aionui-serve-config.yaml")).unwrap();
         assert!(body.contains("presets:"));
         assert!(body.contains("tool: ask_for_writes"));
+    }
+
+    #[test]
+    fn reads_tool_policy_from_serve_overlay() {
+        let dir = tempdir().unwrap();
+        apply_tool_policy_serve_overlay(dir.path(), "readonly").unwrap();
+        assert_eq!(
+            read_tool_policy_from_serve_overlay(dir.path()),
+            Some(FinclawToolPolicy::Readonly)
+        );
     }
 }

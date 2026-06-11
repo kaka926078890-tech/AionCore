@@ -52,6 +52,9 @@ pub struct Builder {
     mode: Mode,
     backend: Option<String>,
     wrapper_mode: SpawnWrapperMode,
+    stdin_explicit: bool,
+    stdout_explicit: bool,
+    stderr_explicit: bool,
 }
 
 /// Force-kill a spawned child and wait for the direct child handle to exit.
@@ -109,6 +112,9 @@ impl Builder {
             mode: Mode::Default,
             backend: None,
             wrapper_mode: SpawnWrapperMode::None,
+            stdin_explicit: false,
+            stdout_explicit: false,
+            stderr_explicit: false,
         }
     }
 
@@ -135,6 +141,9 @@ impl Builder {
             mode: Mode::CleanCli,
             backend: None,
             wrapper_mode: SpawnWrapperMode::None,
+            stdin_explicit: false,
+            stdout_explicit: false,
+            stderr_explicit: false,
         }
     }
 
@@ -154,6 +163,9 @@ impl Builder {
             mode: Mode::Default,
             backend: None,
             wrapper_mode: SpawnWrapperMode::None,
+            stdin_explicit: false,
+            stdout_explicit: false,
+            stderr_explicit: false,
         }
     }
 
@@ -218,16 +230,19 @@ impl Builder {
     }
 
     pub fn stdin<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Self {
+        self.stdin_explicit = true;
         self.inner.stdin(cfg);
         self
     }
 
     pub fn stdout<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Self {
+        self.stdout_explicit = true;
         self.inner.stdout(cfg);
         self
     }
 
     pub fn stderr<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Self {
+        self.stderr_explicit = true;
         self.inner.stderr(cfg);
         self
     }
@@ -299,6 +314,16 @@ impl Builder {
                 .stderr(Stdio::piped())
                 .env("NO_COLOR", "1")
                 .env("TERM", "dumb");
+        } else {
+            if self.stdin_explicit {
+                self.inner.stdin(Stdio::piped());
+            }
+            if self.stdout_explicit {
+                self.inner.stdout(Stdio::piped());
+            }
+            if self.stderr_explicit {
+                self.inner.stderr(Stdio::piped());
+            }
         }
         if let Some(dir) = cwd {
             self.inner.current_dir(dir);
@@ -703,5 +728,42 @@ mod tests {
             wait_for_pid_exit(child_pid, Duration::from_secs(5)),
             "background child pid={child_pid} should exit after cached group kill",
         );
+    }
+
+    struct PrefixArgPolicy {
+        marker: &'static str,
+    }
+
+    impl crate::spawn_policy::SpawnPolicy for PrefixArgPolicy {
+        fn wrap(&self, intent: &crate::spawn_policy::SpawnIntent) -> crate::spawn_policy::ResolvedSpawn {
+            let mut args = vec![OsString::from(self.marker)];
+            args.extend(intent.args.iter().cloned());
+            crate::spawn_policy::ResolvedSpawn {
+                program: intent.program.clone(),
+                args,
+                cwd: intent.cwd.clone(),
+                child_env: intent.child_env.clone(),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_policy_rebuild_preserves_explicit_piped_stdio() {
+        crate::spawn_policy::register_spawn_policy(Box::new(PrefixArgPolicy { marker: "wrapped" }));
+
+        let mut builder = Builder::new("sh");
+        builder
+            .arg("-c")
+            .arg("echo piped")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = builder.spawn().expect("spawn with wrapped policy");
+        assert!(
+            child.stdout.take().is_some(),
+            "stdout must stay piped after spawn-policy rebuild"
+        );
+        let _ = child.kill().await;
     }
 }
