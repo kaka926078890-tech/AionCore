@@ -384,6 +384,7 @@ dependencies = [
  "aionui-db",
  "aionui-extension",
  "aionui-file",
+ "aionui-findesk",
  "aionui-mcp",
  "aionui-office",
  "aionui-realtime",
@@ -656,6 +657,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "aionui-findesk"
+version = "0.1.27"
+dependencies = [
+ "aionui-runtime",
+ "dirs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "aionui-mcp"
 version = "0.1.27"
 dependencies = [
@@ -783,6 +796,7 @@ dependencies = [
  "aionui-auth",
  "aionui-common",
  "aionui-db",
+ "aionui-findesk",
  "aionui-realtime",
  "aionui-runtime",
  "async-trait",

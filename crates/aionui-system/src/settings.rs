@@ -30,15 +30,17 @@ impl SettingsService {
             .await
             .map_err(|e| SystemError::Internal(format!("Failed to get settings: {e}")))?;
 
-        Ok(
-            row.map_or_else(SystemSettingsResponse::default, |s| SystemSettingsResponse {
-                language: s.language,
-                notification_enabled: s.notification_enabled,
-                cron_notification_enabled: s.cron_notification_enabled,
-                command_queue_enabled: s.command_queue_enabled,
-                save_upload_to_workspace: s.save_upload_to_workspace,
-            }),
-        )
+        let response = row.map_or_else(SystemSettingsResponse::default, |s| SystemSettingsResponse {
+            language: s.language,
+            notification_enabled: s.notification_enabled,
+            cron_notification_enabled: s.cron_notification_enabled,
+            command_queue_enabled: s.command_queue_enabled,
+            save_upload_to_workspace: s.save_upload_to_workspace,
+            finsafe_enabled: s.finsafe_enabled,
+        });
+        #[cfg(feature = "findesk")]
+        aionui_findesk::sync_finsafe_enabled_from_settings(response.finsafe_enabled);
+        Ok(response)
     }
 
     /// Partially update system settings. Only fields present in the request are changed.
@@ -57,6 +59,7 @@ impl SettingsService {
             .unwrap_or(current.cron_notification_enabled);
         let command_queue_enabled = req.command_queue_enabled.unwrap_or(current.command_queue_enabled);
         let save_upload_to_workspace = req.save_upload_to_workspace.unwrap_or(current.save_upload_to_workspace);
+        let finsafe_enabled = req.finsafe_enabled.unwrap_or(current.finsafe_enabled);
 
         let row = self
             .repo
@@ -66,9 +69,13 @@ impl SettingsService {
                 cron_notification_enabled,
                 command_queue_enabled,
                 save_upload_to_workspace,
+                finsafe_enabled,
             )
             .await
             .map_err(|e| SystemError::Internal(format!("Failed to update settings: {e}")))?;
+
+        #[cfg(feature = "findesk")]
+        aionui_findesk::sync_finsafe_enabled_from_settings(row.finsafe_enabled);
 
         Ok(SystemSettingsResponse {
             language: row.language,
@@ -76,6 +83,7 @@ impl SettingsService {
             cron_notification_enabled: row.cron_notification_enabled,
             command_queue_enabled: row.command_queue_enabled,
             save_upload_to_workspace: row.save_upload_to_workspace,
+            finsafe_enabled: row.finsafe_enabled,
         })
     }
 }

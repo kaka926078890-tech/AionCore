@@ -1,0 +1,17 @@
+[package]
+name = "aionui-findesk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FinDesk extension: FinSAFE spawn policy and related hooks"
+
+[dependencies]
+aionui-runtime.workspace = true
+dirs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile = "3"
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

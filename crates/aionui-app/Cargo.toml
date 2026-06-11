@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [features]
 default = ["telegram", "lark", "dingtalk", "weixin"]
+findesk = ["aionui-findesk", "aionui-system/findesk"]
 telegram = ["aionui-channel/telegram"]
 lark = ["aionui-channel/lark"]
 dingtalk = ["aionui-channel/dingtalk"]
@@ -33,6 +34,7 @@ aionui-channel.workspace = true
 aionui-team.workspace = true
 aionui-cron.workspace = true
 aionui-assistant.workspace = true
+aionui-findesk = { workspace = true, optional = true }
 aionui-runtime.workspace = true
 aion-config.workspace = true
 axum.workspace = true

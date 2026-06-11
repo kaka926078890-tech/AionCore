@@ -3,7 +3,11 @@ name = "aionui-system"
 version.workspace = true
 edition.workspace = true
 
+[features]
+findesk = ["dep:aionui-findesk"]
+
 [dependencies]
+aionui-findesk = { path = "../aionui-findesk", optional = true }
 aionui-auth.workspace = true
 aionui-common.workspace = true
 aionui-db.workspace = true

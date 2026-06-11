@@ -84,6 +84,9 @@ async fn async_main(merged_path: String, cli: Cli) -> Result<ExitCode, MainError
         Some(Command::Doctor) => Ok(commands::run_doctor(&cli, &merged_path).await?),
         Some(Command::PrepareManagedResources(args)) => Ok(commands::run_prepare_managed_resources(args).await?),
         None => {
+            #[cfg(feature = "findesk")]
+            let _findesk_handles = aionui_findesk::register_from_env();
+
             let mut env = bootstrap::init_environment(&cli, &merged_path)?;
             let listener = commands::bind_http_listener(&mut env.config).await?;
             let database = bootstrap::init_data_layer(&env.config).await?;

@@ -188,6 +188,15 @@ impl AppServices {
         let task_manager_delete_hook: Arc<dyn OnConversationDelete> = task_manager_concrete;
         let conversation_runtime_state = Arc::new(ConversationRuntimeStateService::default());
 
+        #[cfg(feature = "findesk")]
+        {
+            use aionui_db::{ISettingsRepository, SqliteSettingsRepository};
+            use aionui_system::SettingsService;
+            let settings_repo = Arc::new(SqliteSettingsRepository::new(database.pool().clone()));
+            let settings = SettingsService::new(settings_repo);
+            let _ = settings.get_settings().await;
+        }
+
         Ok(Self {
             database,
             jwt_service: Arc::new(JwtService::new(secret.clone())),

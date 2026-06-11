@@ -13,5 +13,6 @@ pub struct SystemSettings {
     pub cron_notification_enabled: bool,
     pub command_queue_enabled: bool,
     pub save_upload_to_workspace: bool,
+    pub finsafe_enabled: bool,
     pub updated_at: TimestampMs,
 }

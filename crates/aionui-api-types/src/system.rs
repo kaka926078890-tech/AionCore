@@ -14,6 +14,7 @@ pub struct SystemSettingsResponse {
     pub cron_notification_enabled: bool,
     pub command_queue_enabled: bool,
     pub save_upload_to_workspace: bool,
+    pub finsafe_enabled: bool,
 }
 
 impl Default for SystemSettingsResponse {
@@ -24,6 +25,7 @@ impl Default for SystemSettingsResponse {
             cron_notification_enabled: false,
             command_queue_enabled: false,
             save_upload_to_workspace: false,
+            finsafe_enabled: true,
         }
     }
 }
@@ -39,6 +41,7 @@ pub struct UpdateSettingsRequest {
     pub cron_notification_enabled: Option<bool>,
     pub command_queue_enabled: Option<bool>,
     pub save_upload_to_workspace: Option<bool>,
+    pub finsafe_enabled: Option<bool>,
 }
 
 impl UpdateSettingsRequest {
@@ -49,6 +52,7 @@ impl UpdateSettingsRequest {
             && self.cron_notification_enabled.is_none()
             && self.command_queue_enabled.is_none()
             && self.save_upload_to_workspace.is_none()
+            && self.finsafe_enabled.is_none()
     }
 }
 
@@ -91,6 +95,7 @@ mod tests {
         assert_eq!(json["cron_notification_enabled"], false);
         assert_eq!(json["command_queue_enabled"], false);
         assert_eq!(json["save_upload_to_workspace"], false);
+        assert_eq!(json["finsafe_enabled"], true);
         // Verify snake_case, not camelCase
         assert!(json.get("notificationEnabled").is_none());
         assert!(json.get("cronNotificationEnabled").is_none());
@@ -103,7 +108,8 @@ mod tests {
             "notification_enabled": false,
             "cron_notification_enabled": true,
             "command_queue_enabled": true,
-            "save_upload_to_workspace": true
+            "save_upload_to_workspace": true,
+            "finsafe_enabled": false
         });
         let resp: SystemSettingsResponse = serde_json::from_value(raw).unwrap();
         assert_eq!(resp.language, "zh-CN");
@@ -121,6 +127,7 @@ mod tests {
             cron_notification_enabled: true,
             command_queue_enabled: true,
             save_upload_to_workspace: true,
+            finsafe_enabled: false,
         };
         let json = serde_json::to_string(&original).unwrap();
         let parsed: SystemSettingsResponse = serde_json::from_str(&json).unwrap();

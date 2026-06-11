@@ -40,7 +40,7 @@ mod spawn;
 mod spawn_policy;
 pub use spawn::{Builder, kill_process_tree};
 pub use spawn_policy::{
-    SpawnIntent, SpawnPolicy, SpawnWrapperMode, apply_spawn_policies, register_spawn_policy,
+    ResolvedSpawn, SpawnIntent, SpawnPolicy, SpawnWrapperMode, apply_spawn_policies, register_spawn_policy,
 };
 
 #[cfg(test)]

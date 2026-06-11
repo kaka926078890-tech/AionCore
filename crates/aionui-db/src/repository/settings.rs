@@ -19,5 +19,6 @@ pub trait ISettingsRepository: Send + Sync {
         cron_notification_enabled: bool,
         command_queue_enabled: bool,
         save_upload_to_workspace: bool,
+        finsafe_enabled: bool,
     ) -> Result<SystemSettings, DbError>;
 }

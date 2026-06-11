@@ -33,20 +33,22 @@ impl ISettingsRepository for SqliteSettingsRepository {
         cron_notification_enabled: bool,
         command_queue_enabled: bool,
         save_upload_to_workspace: bool,
+        finsafe_enabled: bool,
     ) -> Result<SystemSettings, DbError> {
         let now = aionui_common::now_ms();
 
         sqlx::query(
             "INSERT INTO system_settings \
                 (id, language, notification_enabled, cron_notification_enabled, \
-                 command_queue_enabled, save_upload_to_workspace, updated_at) \
-             VALUES (1, ?, ?, ?, ?, ?, ?) \
+                 command_queue_enabled, save_upload_to_workspace, finsafe_enabled, updated_at) \
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(id) DO UPDATE SET \
                 language = excluded.language, \
                 notification_enabled = excluded.notification_enabled, \
                 cron_notification_enabled = excluded.cron_notification_enabled, \
                 command_queue_enabled = excluded.command_queue_enabled, \
                 save_upload_to_workspace = excluded.save_upload_to_workspace, \
+                finsafe_enabled = excluded.finsafe_enabled, \
                 updated_at = excluded.updated_at",
         )
         .bind(language)
@@ -54,6 +56,7 @@ impl ISettingsRepository for SqliteSettingsRepository {
         .bind(cron_notification_enabled)
         .bind(command_queue_enabled)
         .bind(save_upload_to_workspace)
+        .bind(finsafe_enabled)
         .bind(now)
         .execute(&self.pool)
         .await?;
@@ -65,6 +68,7 @@ impl ISettingsRepository for SqliteSettingsRepository {
             cron_notification_enabled,
             command_queue_enabled,
             save_upload_to_workspace,
+            finsafe_enabled,
             updated_at: now,
         })
     }
@@ -90,7 +94,7 @@ mod tests {
     #[tokio::test]
     async fn upsert_creates_settings() {
         let (repo, _db) = setup().await;
-        let s = repo.upsert_settings("zh-CN", false, true, true, false).await.unwrap();
+        let s = repo.upsert_settings("zh-CN", false, true, true, false, true).await.unwrap();
 
         assert_eq!(s.id, 1);
         assert_eq!(s.language, "zh-CN");
@@ -104,7 +108,7 @@ mod tests {
     #[tokio::test]
     async fn upsert_then_get_returns_same() {
         let (repo, _db) = setup().await;
-        repo.upsert_settings("en-US", true, false, false, true).await.unwrap();
+        repo.upsert_settings("en-US", true, false, false, true, true).await.unwrap();
 
         let s = repo.get_settings().await.unwrap().unwrap();
         assert_eq!(s.language, "en-US");
@@ -117,8 +121,8 @@ mod tests {
     #[tokio::test]
     async fn upsert_overwrites_existing() {
         let (repo, _db) = setup().await;
-        repo.upsert_settings("en-US", true, false, false, false).await.unwrap();
-        let s = repo.upsert_settings("ja-JP", false, true, true, true).await.unwrap();
+        repo.upsert_settings("en-US", true, false, false, false, true).await.unwrap();
+        let s = repo.upsert_settings("ja-JP", false, true, true, true, false).await.unwrap();
 
         assert_eq!(s.language, "ja-JP");
         assert!(!s.notification_enabled);
