@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,6 +22,10 @@ pub struct FinclawGatewayConfig {
     pub profile: String,
     pub security_mode: Option<String>,
     pub serve_cwd: PathBuf,
+    /// Env overrides for `finclaw serve` (FinDesk model → FINCLAW_LLM_*).
+    pub llm_serve_env: HashMap<String, String>,
+    /// When set, pooled gateways restart if the fingerprint changes.
+    pub model_fingerprint: Option<String>,
 }
 
 pub struct FinclawGateway {
@@ -98,6 +103,9 @@ impl FinclawGateway {
         if let Some(config_path) = prepare_workspace_skills_serve_config(&self.config.serve_cwd) {
             builder.arg("--config");
             builder.arg(config_path);
+        }
+        for (key, value) in &self.config.llm_serve_env {
+            builder.env(key, value);
         }
 
         let child = builder

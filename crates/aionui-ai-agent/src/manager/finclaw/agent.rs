@@ -5,11 +5,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use aionui_api_types::FinclawBuildExtra;
-use aionui_common::{AgentKillReason, AgentType, Confirmation, ConfirmationOption, ConversationStatus};
+use aionui_common::{
+    decrypt_string, AgentKillReason, AgentType, Confirmation, ConfirmationOption, ConversationStatus,
+    ProviderWithModel,
+};
+use aionui_db::IProviderRepository;
+use aionui_findesk::FindeskConfig;
 use aionui_findesk::finclaw::{
-    FinclawApprovalRequired, FinclawGatewayConfig, FinclawInferEvent, apply_tool_policy_from_extra,
-    decision_from_confirm_data, post_infer_stream, resolve_finclaw_infer_capability, shared_gateway_pool,
-    submit_approval_resolve,
+    apply_tool_policy_from_extra, build_finclaw_llm_config_slice, build_finclaw_model_fingerprint,
+    ensure_finclaw_workspace_profile, prepare_finclaw_llm_for_profiles, resolve_finclaw_serve_cwd,
+    FinclawApprovalRequired, FinclawGatewayConfig, FinclawInferEvent, decision_from_confirm_data,
+    post_infer_stream, resolve_finclaw_infer_capability, shared_gateway_pool, submit_approval_resolve,
 };
 use futures_util::{pin_mut, StreamExt};
 use reqwest::Client;
@@ -48,22 +54,71 @@ impl FinclawAgentManager {
         conversation_id: String,
         workspace: String,
         config: FinclawBuildExtra,
+        model: ProviderWithModel,
+        provider_repo: Arc<dyn IProviderRepository>,
+        encryption_key: [u8; 32],
     ) -> Result<Self, AgentError> {
-        let profile = config
+        let findesk = FindeskConfig::from_env();
+        let base_profile = config
             .finclaw_profile
-            .clone()
+            .as_deref()
             .filter(|p| !p.is_empty())
-            .unwrap_or_else(|| "default".to_string());
-        let serve_cwd = PathBuf::from(&workspace);
+            .unwrap_or("default");
+        let serve_cwd = resolve_finclaw_serve_cwd(&workspace);
+        let derived_profile = ensure_finclaw_workspace_profile(base_profile, &serve_cwd)
+            .map_err(AgentError::bad_request)?;
 
         apply_tool_policy_from_extra(&serve_cwd, config.finclaw_tool_policy.as_deref())
             .map_err(AgentError::bad_request)?;
 
+        if model.provider_id.trim().is_empty() {
+            return Err(AgentError::bad_request(
+                "FinClaw requires a model from FinDesk settings. Configure a provider in Settings → Models, then retry.",
+            ));
+        }
+
+        let row = provider_repo
+            .find_by_id(&model.provider_id)
+            .await
+            .map_err(|e| AgentError::internal(format!("Failed to load provider config: {e}")))?
+            .ok_or_else(|| {
+                AgentError::bad_request(format!("Provider '{}' not found", model.provider_id))
+            })?;
+
+        let api_key = decrypt_string(&row.api_key_encrypted, &encryption_key)
+            .map_err(|e| AgentError::internal(e.to_string()))?;
+
+        let model_id = model
+            .use_model
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&model.model)
+            .to_owned();
+
+        let llm_slice = build_finclaw_llm_config_slice(
+            &row.platform,
+            &row.base_url,
+            &model_id,
+            &api_key,
+            row.model_protocols.as_deref(),
+        );
+        let llm_serve_env = prepare_finclaw_llm_for_profiles(
+            &findesk,
+            config.cli_path.as_deref(),
+            base_profile,
+            &derived_profile,
+            &llm_slice,
+        )
+        .await
+        .map_err(AgentError::bad_request)?;
+
         let gateway_config = FinclawGatewayConfig {
             cli_path: config.cli_path.clone(),
-            profile: profile.clone(),
+            profile: derived_profile.clone(),
             security_mode: config.finclaw_security_mode.clone(),
             serve_cwd: serve_cwd.clone(),
+            llm_serve_env,
+            model_fingerprint: Some(build_finclaw_model_fingerprint(&llm_slice)),
         };
 
         let pool = shared_gateway_pool();
@@ -75,7 +130,7 @@ impl FinclawAgentManager {
 
         Ok(Self {
             runtime: AgentRuntime::new(conversation_id, workspace, 128),
-            gateway_profile: profile,
+            gateway_profile: derived_profile,
             gateway_cwd: serve_cwd,
             gateway,
             config,

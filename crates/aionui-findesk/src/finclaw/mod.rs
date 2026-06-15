@@ -6,9 +6,11 @@ mod gateway;
 mod gateway_pool;
 mod host_context;
 mod infer;
+mod llm_config;
 mod policy_profile;
 mod port_json;
 mod serve_config;
+mod workspace;
 
 pub use approval::{
     FinclawApprovalDecision, FinclawApprovalRequired, decision_from_confirm_data, parse_approval_required,
@@ -23,6 +25,11 @@ pub use gateway::{FinclawGateway, FinclawGatewayConfig};
 pub use gateway_pool::{FinclawGatewayPool, shared_gateway_pool};
 pub use host_context::{HostAgentRow, resolve_finclaw_host_context};
 pub use infer::{post_infer_stream, FinclawInferEvent};
+pub use llm_config::{
+    build_finclaw_llm_config_slice, build_finclaw_model_fingerprint, prepare_finclaw_llm_for_profiles,
+    FinclawLlmConfigSlice,
+};
+pub use workspace::{derive_finclaw_workspace_profile, ensure_finclaw_workspace_profile, resolve_finclaw_serve_cwd};
 pub use policy_profile::{
     FinclawToolPolicy, apply_tool_policy_from_extra, apply_tool_policy_serve_overlay, finclaw_preset_to_tool_policy,
     finclaw_tool_policy_to_preset, finclaw_tool_policy_to_wire, is_finclaw_tool_policy,

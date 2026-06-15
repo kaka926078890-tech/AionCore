@@ -16,6 +16,7 @@ struct PoolKey {
 struct PoolEntry {
     gateway: Arc<FinclawGateway>,
     ref_count: usize,
+    model_fingerprint: Option<String>,
 }
 
 /// Profile + workspace keyed pool sharing [`FinclawGateway`] instances.
@@ -37,10 +38,22 @@ impl FinclawGatewayPool {
     pub async fn acquire(&self, config: FinclawGatewayConfig) -> (Arc<FinclawGateway>, usize) {
         let key = pool_key(&config.profile, &config.serve_cwd);
         let mut entries = self.entries.lock().await;
+        if let Some(entry) = entries.get(&key)
+            && entry.model_fingerprint != config.model_fingerprint
+        {
+            let gateway = Arc::clone(&entry.gateway);
+            entries.remove(&key);
+            drop(entries);
+            gateway.shutdown().await;
+            entries = self.entries.lock().await;
+        }
+
         let entry = entries.entry(key).or_insert_with(|| PoolEntry {
             gateway: Arc::new(FinclawGateway::new(self.findesk.clone(), config.clone())),
             ref_count: 0,
+            model_fingerprint: config.model_fingerprint.clone(),
         });
+        entry.model_fingerprint = config.model_fingerprint.clone();
         entry.ref_count += 1;
         let count = entry.ref_count;
         (Arc::clone(&entry.gateway), count)
@@ -128,6 +141,8 @@ mod tests {
             profile: "default".into(),
             security_mode: None,
             serve_cwd: dir.path().to_path_buf(),
+            llm_serve_env: HashMap::new(),
+            model_fingerprint: None,
         };
 
         let (_, count1) = pool.acquire(config.clone()).await;
@@ -153,6 +168,8 @@ mod tests {
             profile: "default".into(),
             security_mode: None,
             serve_cwd: dir.path().to_path_buf(),
+            llm_serve_env: HashMap::new(),
+            model_fingerprint: None,
         };
 
         pool.acquire(config).await;
@@ -175,6 +192,8 @@ mod tests {
             profile: "default".into(),
             security_mode: None,
             serve_cwd: dir_a.path().to_path_buf(),
+            llm_serve_env: HashMap::new(),
+            model_fingerprint: None,
         })
         .await;
         pool.acquire(FinclawGatewayConfig {
@@ -182,6 +201,8 @@ mod tests {
             profile: "default".into(),
             security_mode: None,
             serve_cwd: dir_b.path().to_path_buf(),
+            llm_serve_env: HashMap::new(),
+            model_fingerprint: None,
         })
         .await;
 
