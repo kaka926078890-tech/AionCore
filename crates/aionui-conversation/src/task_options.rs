@@ -19,17 +19,30 @@
 use aionui_common::ProviderWithModel;
 use aionui_db::models::ConversationRow;
 
+/// Non-aionrs conversations (FinClaw, etc.) persist model in `extra.providerModel`
+/// per desktop spec 2026-05-12; aionrs uses the top-level `model` column.
+pub const PROVIDER_MODEL_EXTRA_KEY: &str = "providerModel";
+
 /// Resolve a conversation row's stored model into a [`ProviderWithModel`].
 ///
 /// Returns an empty `ProviderWithModel { provider_id: "", model: "", use_model: None }`
-/// when the row's `model` column is `NULL` or unparseable. This matches the
-/// legacy behaviour of `ConversationService::build_task_options` and is the
-/// canonical "no model selected" sentinel consumed by agent factories.
+/// when neither the `model` column nor `extra.providerModel` is parseable.
 pub fn provider_model_from_conversation_row(row: &ConversationRow) -> ProviderWithModel {
-    row.model
+    if let Some(parsed) = row
+        .model
         .as_deref()
         .and_then(parse_provider_with_model_loose)
-        .unwrap_or_else(empty_provider_model)
+    {
+        return parsed;
+    }
+
+    provider_model_from_extra_json(&row.extra).unwrap_or_else(empty_provider_model)
+}
+
+fn provider_model_from_extra_json(extra_raw: &str) -> Option<ProviderWithModel> {
+    let extra = serde_json::from_str::<serde_json::Value>(extra_raw).ok()?;
+    let provider_model = extra.get(PROVIDER_MODEL_EXTRA_KEY)?;
+    parse_provider_with_model_value(provider_model)
 }
 
 /// Canonical sentinel `ProviderWithModel` used when a conversation row has
@@ -54,11 +67,17 @@ pub fn empty_provider_model() -> ProviderWithModel {
 /// `None` when no `provider_id` can be extracted; callers treat that as
 /// "no model selected".
 fn parse_provider_with_model_loose(raw: &str) -> Option<ProviderWithModel> {
-    if let Ok(model) = serde_json::from_str::<ProviderWithModel>(raw) {
-        return Some(model);
+    let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    parse_provider_with_model_value(&value)
+}
+
+fn parse_provider_with_model_value(value: &serde_json::Value) -> Option<ProviderWithModel> {
+    if let Ok(model) = serde_json::from_value::<ProviderWithModel>(value.clone()) {
+        if !model.provider_id.is_empty() {
+            return Some(model);
+        }
     }
 
-    let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
     let provider_id = value
         .get("provider_id")
         .or_else(|| value.get("providerId"))
@@ -94,13 +113,17 @@ mod tests {
     use super::*;
 
     fn row_with_model(model: Option<&str>) -> ConversationRow {
+        row_with_model_and_extra(model, "{}")
+    }
+
+    fn row_with_model_and_extra(model: Option<&str>, extra: &str) -> ConversationRow {
         ConversationRow {
             id: "conv-1".into(),
             user_id: "user-1".into(),
             name: "test".into(),
             r#type: "aionrs".into(),
             model: model.map(ToOwned::to_owned),
-            extra: "{}".into(),
+            extra: extra.into(),
             status: None,
             source: None,
             channel_chat_id: None,
@@ -109,6 +132,27 @@ mod tests {
             created_at: 0,
             updated_at: 0,
         }
+    }
+
+    #[test]
+    fn finclaw_reads_provider_model_from_extra_when_column_empty() {
+        let extra = r#"{"providerModel":{"provider_id":"deepseek-id","model":"deepseek-v4-flash"}}"#;
+        let row = row_with_model_and_extra(None, extra);
+        let m = provider_model_from_conversation_row(&row);
+        assert_eq!(m.provider_id, "deepseek-id");
+        assert_eq!(m.model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn column_model_takes_precedence_over_extra_provider_model() {
+        let extra = r#"{"providerModel":{"provider_id":"from-extra","model":"m1"}}"#;
+        let row = row_with_model_and_extra(
+            Some(r#"{"provider_id":"from-column","model":"m2"}"#),
+            extra,
+        );
+        let m = provider_model_from_conversation_row(&row);
+        assert_eq!(m.provider_id, "from-column");
+        assert_eq!(m.model, "m2");
     }
 
     #[test]
