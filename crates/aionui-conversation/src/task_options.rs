@@ -56,6 +56,27 @@ pub fn empty_provider_model() -> ProviderWithModel {
     }
 }
 
+/// Returns true when `backend` names an agent/vendor label rather than a
+/// provider row id stored in FinDesk settings.
+pub fn is_known_agent_backend_label(backend: &str) -> bool {
+    matches!(
+        backend.trim().to_ascii_lowercase().as_str(),
+        "finclaw" | "aionrs" | "acp" | "claude" | "gemini" | "codex" | "hermes"
+    )
+}
+
+/// Serialize a provider model for `extra.providerModel`.
+pub fn provider_model_extra_value(model: &ProviderWithModel) -> serde_json::Value {
+    serde_json::json!({
+        "provider_id": model.provider_id,
+        "model": model.model,
+        "use_model": model
+            .use_model
+            .clone()
+            .unwrap_or_else(|| model.model.clone()),
+    })
+}
+
 /// Permissive parser for `conversation.model` JSON.
 ///
 /// Tries strict serde first, then falls back to manual extraction so older

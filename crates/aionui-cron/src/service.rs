@@ -1039,12 +1039,17 @@ fn build_agent_config_from_conversation(
     let model_resolved = aionui_conversation::task_options::provider_model_from_conversation_row(row);
     let model = (!model_resolved.provider_id.is_empty()).then_some(&model_resolved);
 
-    let backend = if row.r#type == "aionrs" {
+    let backend = if row.r#type == "aionrs" || row.r#type == "finclaw" {
         model
             .map(|value| value.provider_id.clone())
             .filter(|value| !value.is_empty())
-            .or_else(|| get_string(&extra, &["backend"]))
-            .unwrap_or_else(|| "aionrs".to_owned())
+            .or_else(|| {
+                get_string(&extra, &["backend"]).filter(|value| {
+                    !value.eq_ignore_ascii_case(&row.r#type)
+                        && !aionui_conversation::task_options::is_known_agent_backend_label(value)
+                })
+            })
+            .unwrap_or_else(|| row.r#type.clone())
     } else {
         get_string(&extra, &["backend"])
             .or_else(|| {
@@ -1085,14 +1090,23 @@ fn build_agent_config_from_conversation(
         custom_agent_id,
         preset_agent_type,
         mode: Some(full_auto_mode),
-        model_id: get_string(&extra, &["current_model_id", "currentModelId"]).or_else(|| {
+        model_id: if row.r#type == "aionrs" || row.r#type == "finclaw" {
             model.and_then(|value| {
                 value
                     .use_model
                     .clone()
                     .or_else(|| (!value.model.is_empty()).then(|| value.model.clone()))
             })
-        }),
+        } else {
+            get_string(&extra, &["current_model_id", "currentModelId"]).or_else(|| {
+                model.and_then(|value| {
+                    value
+                        .use_model
+                        .clone()
+                        .or_else(|| (!value.model.is_empty()).then(|| value.model.clone()))
+                })
+            })
+        },
         config_options: None,
         workspace: get_string(&extra, &["workspace"]),
     };
@@ -1113,21 +1127,32 @@ fn get_string(extra: &serde_json::Value, keys: &[&str]) -> Option<String> {
 // Free functions
 // ---------------------------------------------------------------------------
 
-/// Aionrs cron jobs require `agent_config.backend` (provider_id) to be set —
-/// the executor uses it to look up the provider row and build the agent.
-/// Reject add/update requests that would produce an invalid aionrs job.
+/// Aionrs and FinClaw cron jobs require `agent_config.backend` (provider_id) and
+/// `model_id` so the executor can build a conversation with a configured model.
 fn validate_aionrs_agent_config(
     agent_type: &str,
     agent_config: Option<&aionui_api_types::CronAgentConfigDto>,
 ) -> Result<(), CronError> {
-    if agent_type != "aionrs" {
+    if agent_type != "aionrs" && agent_type != "finclaw" {
         return Ok(());
     }
-    let backend_ok = agent_config.is_some_and(|c| !c.backend.trim().is_empty());
-    if !backend_ok {
-        return Err(CronError::InvalidAgentConfig(
-            "aionrs cron jobs require agent_config.backend (provider_id)".into(),
-        ));
+    let Some(config) = agent_config else {
+        return Err(CronError::InvalidAgentConfig(format!(
+            "{agent_type} cron jobs require agent_config.backend (provider_id) and model_id"
+        )));
+    };
+    let backend = config.backend.trim();
+    let backend_ok = !backend.is_empty()
+        && !backend.eq_ignore_ascii_case(agent_type)
+        && !aionui_conversation::task_options::is_known_agent_backend_label(backend);
+    let model_ok = config
+        .model_id
+        .as_deref()
+        .is_some_and(|id| !id.trim().is_empty());
+    if !backend_ok || !model_ok {
+        return Err(CronError::InvalidAgentConfig(format!(
+            "{agent_type} cron jobs require agent_config.backend (provider_id) and model_id"
+        )));
     }
     Ok(())
 }
@@ -1374,6 +1399,38 @@ mod tests {
         assert!(validate_aionrs_agent_config("acp", None).is_ok());
         let cfg = agent_cfg_dto("");
         assert!(validate_aionrs_agent_config("claude", Some(&cfg)).is_ok());
+    }
+
+    #[test]
+    fn validate_finclaw_rejects_vendor_backend_label() {
+        let cfg = agent_cfg_dto("finclaw");
+        let err = validate_aionrs_agent_config("finclaw", Some(&cfg)).unwrap_err();
+        assert!(matches!(err, CronError::InvalidAgentConfig(_)));
+    }
+
+    #[test]
+    fn build_agent_config_finclaw_uses_provider_model_from_extra() {
+        let row = aionui_db::models::ConversationRow {
+            id: "conv-finclaw".into(),
+            user_id: "user-1".into(),
+            name: "尿尿".into(),
+            r#type: "finclaw".into(),
+            model: None,
+            extra: r#"{"backend":"finclaw","providerModel":{"provider_id":"provider-hash","model":"deepseek-v4-flash","use_model":"deepseek-v4-flash"}}"#.into(),
+            status: None,
+            source: None,
+            channel_chat_id: None,
+            pinned: false,
+            pinned_at: None,
+            created_at: 0,
+            updated_at: 0,
+        };
+
+        let (agent_type, agent_config) = build_agent_config_from_conversation(&row);
+        let config = agent_config.expect("agent config");
+        assert_eq!(agent_type, "finclaw");
+        assert_eq!(config.backend, "provider-hash");
+        assert_eq!(config.model_id.as_deref(), Some("deepseek-v4-flash"));
     }
 
     // -- parse_execution_mode -------------------------------------------------

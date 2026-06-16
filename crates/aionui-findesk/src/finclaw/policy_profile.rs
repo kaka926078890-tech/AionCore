@@ -80,10 +80,11 @@ pub fn apply_tool_policy_serve_overlay(workspace: &Path, policy: &str) -> Result
 }
 
 /// Apply `finclaw_tool_policy` from conversation extra before serve starts.
+/// Defaults to `auto` (direct tool use) when the conversation has no stored policy.
 pub fn apply_tool_policy_from_extra(workspace: &Path, finclaw_tool_policy: Option<&str>) -> Result<(), String> {
-    let Some(policy) = finclaw_tool_policy.filter(|p| !p.is_empty() && is_finclaw_tool_policy(p)) else {
-        return Ok(());
-    };
+    let policy = finclaw_tool_policy
+        .filter(|p| !p.is_empty() && is_finclaw_tool_policy(p))
+        .unwrap_or("auto");
     apply_tool_policy_serve_overlay(workspace, policy)
 }
 
@@ -151,6 +152,14 @@ mod tests {
         let body = std::fs::read_to_string(dir.path().join(".finclaw/aionui-serve-config.yaml")).unwrap();
         assert!(body.contains("presets:"));
         assert!(body.contains("tool: ask_for_writes"));
+    }
+
+    #[test]
+    fn apply_from_extra_defaults_to_auto_when_missing() {
+        let dir = tempdir().unwrap();
+        apply_tool_policy_from_extra(dir.path(), None).unwrap();
+        let body = std::fs::read_to_string(dir.path().join(".finclaw/aionui-serve-config.yaml")).unwrap();
+        assert!(body.contains("tool: auto_all"));
     }
 
     #[test]

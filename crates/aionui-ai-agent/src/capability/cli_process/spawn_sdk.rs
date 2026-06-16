@@ -37,7 +37,10 @@ impl CliAgentProcess {
             if let Some(backend) = backend.filter(|value| !value.is_empty()) {
                 cmd.backend(backend);
             }
-            cmd.spawn_wrapper_mode(SpawnWrapperMode::ShortLived);
+            // ACP SDK sessions are long-lived brokers (like FinClaw serve) and may
+            // block on user permission prompts — use interactive self-confine so
+            // FinSAFE applies the 1h timeout instead of the 120s short-lived cap.
+            cmd.spawn_wrapper_mode(SpawnWrapperMode::InteractiveSelfConfine);
         }
         let agent_env = aionui_runtime::agent_process_env().await;
         cmd.args(&config.args)

@@ -58,7 +58,7 @@ pub fn build_runtime_policy_yaml(ctx: &ProfileContext, config: &FindeskConfig) -
     let mut read_write = profiles::resolve_read_write_paths(ctx, config);
     read_write.extend(profiles::macos_temp_paths());
 
-    let program_mode = if ctx.backend == "finclaw" {
+    let program_mode = if profiles::uses_interactive_program_mode(ctx) {
         "interactive"
     } else {
         "short-lived"
@@ -181,6 +181,7 @@ mod tests {
             executable: PathBuf::from("/usr/local/bin/finclaw"),
             cwd: Some(PathBuf::from("/tmp/workspace")),
             home_dir: PathBuf::from("/home/user"),
+            wrapper_mode: aionui_runtime::SpawnWrapperMode::InteractiveSelfConfine,
         };
         let config = FindeskConfig {
             finsafe_bin: None,
@@ -198,6 +199,28 @@ mod tests {
             yaml.contains("degrade:\n  allow_fallback: true"),
             "degrade.allow_fallback must be nested YAML; got:\n{yaml}"
         );
+    }
+
+    #[test]
+    fn hermes_interactive_sdk_policy_uses_one_hour_timeout() {
+        let ctx = ProfileContext {
+            backend: "hermes".into(),
+            executable: PathBuf::from("/Users/tester/.local/bin/hermes"),
+            cwd: Some(PathBuf::from("/tmp/workspace")),
+            home_dir: PathBuf::from("/Users/tester"),
+            wrapper_mode: aionui_runtime::SpawnWrapperMode::InteractiveSelfConfine,
+        };
+        let config = FindeskConfig {
+            finsafe_bin: None,
+            finsafe_policies_dir: None,
+            finclaw_bin: None,
+            cache_dir: Some(PathBuf::from("/cache")),
+            work_dir: Some(PathBuf::from("/work")),
+            log_dir: None,
+        };
+        let yaml = build_runtime_policy_yaml(&ctx, &config);
+        assert!(yaml.contains("program_mode: interactive"));
+        assert!(yaml.contains("timeout_ms: 3600000"));
     }
 
     #[test]

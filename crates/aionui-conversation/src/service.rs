@@ -424,29 +424,36 @@ impl ConversationService {
         let auto_inject_names = self.skill_resolver.auto_inject_names().await;
         let initial_skills = compute_initial_skills(&auto_inject_names, &preset_enabled, &exclude_auto_inject);
 
-        // Wire skill symlinks into the auto-provisioned workspace so the
-        // agent CLI picks them up via its native skills dir (e.g.
-        // `.claude/skills/`). Runs only for temp workspaces — a user-chosen
-        // path must not be mutated.
-        if let Some(ws_path) = auto_provisioned_workspace.as_ref()
-            && !is_custom_workspace
+        // Wire skill symlinks so the agent CLI picks them up via its native
+        // skills dir (e.g. `.claude/skills/`, `.finclaw/skills/`). ACP agents
+        // only get temp auto-provisioned workspaces — user-chosen paths must not
+        // be mutated. FinClaw/Aionrs use agent-managed subdirs under the
+        // workspace root, so builtins are linked even for custom workspaces.
+        if should_wire_skills_on_create(&req.r#type, is_custom_workspace, auto_provisioned_workspace.is_some())
             && !initial_skills.is_empty()
             && let Some(rel_dirs) =
                 native_skills_dirs(&self.agent_metadata_repo, &req.r#type, extra.get("backend")).await
         {
-            let resolved = self.skill_resolver.resolve_skills(&initial_skills).await;
-            if !resolved.is_empty() {
-                let rel_dirs_refs: Vec<&str> = rel_dirs.iter().map(String::as_str).collect();
-                let n = self
-                    .skill_resolver
-                    .link_workspace_skills(ws_path, &rel_dirs_refs, &resolved)
-                    .await;
-                debug!(
-                    conversation_id = %id,
-                    workspace = %ws_path.display(),
-                    links = n,
-                    "wired skill symlinks into workspace"
-                );
+            let ws_path = auto_provisioned_workspace.clone().or_else(|| {
+                user_supplied_workspace
+                    .as_ref()
+                    .map(|workspace| PathBuf::from(workspace))
+            });
+            if let Some(ws_path) = ws_path {
+                let resolved = self.skill_resolver.resolve_skills(&initial_skills).await;
+                if !resolved.is_empty() {
+                    let rel_dirs_refs: Vec<&str> = rel_dirs.iter().map(String::as_str).collect();
+                    let n = self
+                        .skill_resolver
+                        .link_workspace_skills(&ws_path, &rel_dirs_refs, &resolved)
+                        .await;
+                    debug!(
+                        conversation_id = %id,
+                        workspace = %ws_path.display(),
+                        links = n,
+                        "wired skill symlinks into workspace"
+                    );
+                }
             }
         }
 
@@ -841,6 +848,33 @@ impl ConversationService {
             existing.model.as_deref() != Some(new_json.as_str())
         });
 
+        let finclaw_tool_policy_changed = if existing_type == AgentType::Finclaw {
+            let existing_extra: serde_json::Value =
+                serde_json::from_str(&existing.extra).unwrap_or_else(|_| serde_json::json!({}));
+            let incoming_policy = req
+                .extra
+                .as_ref()
+                .and_then(|extra| {
+                    extra
+                        .get("finclaw_tool_policy")
+                        .or_else(|| extra.get("finclawToolPolicy"))
+                        .and_then(|value| value.as_str())
+                })
+                .unwrap_or_default();
+            if incoming_policy.is_empty() {
+                false
+            } else {
+                let existing_policy = existing_extra
+                    .get("finclaw_tool_policy")
+                    .or_else(|| existing_extra.get("finclawToolPolicy"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default();
+                existing_policy != incoming_policy
+            }
+        } else {
+            false
+        };
+
         let model_json = req
             .model
             .as_ref()
@@ -863,13 +897,14 @@ impl ConversationService {
 
         self.conversation_repo.update(id, &updates).await?;
 
-        if model_changed {
+        if model_changed || finclaw_tool_policy_changed {
             info!(
-                model_changed = true,
-                "Conversation updated, killing agent task due to model change"
+                model_changed,
+                finclaw_tool_policy_changed,
+                "Conversation updated, killing agent task due to runtime config change"
             );
             if let Err(e) = task_manager.kill(id, None) {
-                warn!(error = %ErrorChain(&e), "Failed to kill agent after model change");
+                warn!(error = %ErrorChain(&e), "Failed to kill agent after conversation update");
             }
         }
 
@@ -1829,21 +1864,15 @@ impl ConversationService {
 
     pub(crate) async fn ensure_auto_workspace_skill_links(&self, row: &ConversationRow, build_opts: &BuildTaskOptions) {
         let context = &build_opts.context;
-        if context.workspace.is_custom {
-            return;
-        }
         let backend = context_backend_value(context);
-        let expected_workspace = expected_auto_workspace_path(
+        let Some(workspace) = resolve_workspace_for_native_skill_links(
+            context,
             &self.workspace_root,
             &row.id,
-            &context.conversation.agent_type,
             backend.as_ref(),
-        );
-
-        let workspace = PathBuf::from(context.workspace.path.trim());
-        if workspace != expected_workspace {
+        ) else {
             return;
-        }
+        };
 
         let skill_names = context_skill_names(context);
         if skill_names.is_empty() {
@@ -2085,6 +2114,48 @@ fn expected_auto_workspace_path(
         "{}-temp-{conversation_id}",
         conversation_label(agent_type, backend)
     ))
+}
+
+/// FinClaw/Aionrs discover skills from agent-managed subdirs under the
+/// workspace (`.finclaw/skills`, `.aionrs/skills`). Those paths are safe to
+/// populate even when the user explicitly chose the workspace root.
+fn links_native_skills_under_user_workspace(agent_type: &AgentType) -> bool {
+    matches!(agent_type, AgentType::Finclaw | AgentType::Aionrs)
+}
+
+fn should_wire_skills_on_create(
+    agent_type: &AgentType,
+    is_custom_workspace: bool,
+    has_auto_provisioned_workspace: bool,
+) -> bool {
+    if links_native_skills_under_user_workspace(agent_type) {
+        return has_auto_provisioned_workspace || is_custom_workspace;
+    }
+    has_auto_provisioned_workspace && !is_custom_workspace
+}
+
+fn resolve_workspace_for_native_skill_links(
+    context: &AgentSessionContext,
+    workspace_root: &std::path::Path,
+    conversation_id: &str,
+    backend: Option<&serde_json::Value>,
+) -> Option<PathBuf> {
+    let workspace = PathBuf::from(context.workspace.path.trim());
+    if workspace.as_os_str().is_empty() {
+        return None;
+    }
+
+    if context.workspace.is_custom {
+        return links_native_skills_under_user_workspace(&context.conversation.agent_type).then_some(workspace);
+    }
+
+    let expected_workspace = expected_auto_workspace_path(
+        workspace_root,
+        conversation_id,
+        &context.conversation.agent_type,
+        backend,
+    );
+    (workspace == expected_workspace).then_some(workspace)
 }
 
 fn context_backend_value(context: &AgentSessionContext) -> Option<serde_json::Value> {
@@ -2536,6 +2607,20 @@ mod tests {
         let patch = json!({});
         merge_json(&mut base, &patch);
         assert_eq!(base, json!({"a": 1}));
+    }
+
+    #[test]
+    fn finclaw_custom_workspace_still_wires_native_skills_on_create() {
+        use aionui_common::AgentType;
+        assert!(should_wire_skills_on_create(&AgentType::Finclaw, true, false));
+        assert!(should_wire_skills_on_create(&AgentType::Aionrs, true, false));
+    }
+
+    #[test]
+    fn acp_custom_workspace_skips_native_skill_wiring_on_create() {
+        use aionui_common::AgentType;
+        assert!(!should_wire_skills_on_create(&AgentType::Acp, true, false));
+        assert!(should_wire_skills_on_create(&AgentType::Acp, false, true));
     }
 
     fn response_with_type(agent_type: aionui_common::AgentType) -> ConversationResponse {

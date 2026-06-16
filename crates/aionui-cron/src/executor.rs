@@ -9,8 +9,12 @@ use aionui_api_types::{CreateConversationRequest, SendMessageRequest};
 use aionui_common::{
     AgentType, ProviderWithModel, WorkspacePathValidationError, now_ms, validate_workspace_path_availability,
 };
+use aionui_conversation::task_options::{
+    is_known_agent_backend_label, provider_model_extra_value, provider_model_from_conversation_row,
+    PROVIDER_MODEL_EXTRA_KEY,
+};
 use aionui_conversation::ConversationService;
-use aionui_db::models::MessageRow;
+use aionui_db::models::{ConversationRow, MessageRow};
 use aionui_db::{ConversationRowUpdate, IConversationRepository};
 use aionui_realtime::EventBroadcaster;
 use tokio::sync::broadcast;
@@ -430,7 +434,14 @@ impl JobExecutor {
         saved_skill: Option<&SavedSkillContext>,
     ) -> Result<String, CronError> {
         let agent_type = parse_agent_type(&self.agent_registry, &job.agent_type).await?;
-        let model = resolve_model(job);
+        // FinClaw stores model in `extra.providerModel` (see build_conversation_extra).
+        // Passing top-level `model` for finclaw makes ConversationService::create reject
+        // the request with a 400 that surfaces as 500 Internal Server Error on run-now.
+        let model = if job.agent_type == "aionrs" {
+            resolve_model(job)
+        } else {
+            None
+        };
         let user_id = self.resolve_conversation_owner_user_id(job).await?;
 
         let extra = build_conversation_extra(&self.agent_registry, job, saved_skill).await;
@@ -478,6 +489,69 @@ impl JobExecutor {
         Ok(response.id)
     }
 
+    async fn ensure_conversation_provider_model(
+        &self,
+        conversation_id: &str,
+        job: &CronJob,
+    ) -> Result<ConversationRow, CronError> {
+        let row = self
+            .get_conversation_row(conversation_id)
+            .await?
+            .ok_or_else(|| CronError::Scheduler(format!("conversation {conversation_id} not found")))?;
+
+        let resolved = provider_model_from_conversation_row(&row);
+        if !resolved.provider_id.is_empty() {
+            return Ok(row);
+        }
+
+        let Some(fallback) = provider_model_from_cron_job_config(job) else {
+            return Ok(row);
+        };
+
+        self.persist_conversation_provider_model(&row, &fallback)
+            .await?;
+
+        self.get_conversation_row(conversation_id)
+            .await?
+            .ok_or_else(|| CronError::Scheduler(format!("conversation {conversation_id} not found")))
+    }
+
+    async fn persist_conversation_provider_model(
+        &self,
+        row: &ConversationRow,
+        model: &ProviderWithModel,
+    ) -> Result<(), CronError> {
+        let mut extra: serde_json::Value =
+            serde_json::from_str(&row.extra).unwrap_or_else(|_| serde_json::json!({}));
+        if !extra.is_object() {
+            extra = serde_json::json!({});
+        }
+        extra
+            .as_object_mut()
+            .expect("json object")
+            .insert(
+                PROVIDER_MODEL_EXTRA_KEY.to_owned(),
+                provider_model_extra_value(model),
+            );
+
+        let mut update = ConversationRowUpdate {
+            extra: Some(extra.to_string()),
+            updated_at: Some(now_ms()),
+            ..Default::default()
+        };
+
+        if row.r#type == "aionrs" {
+            update.model = Some(Some(
+                serde_json::to_string(model).map_err(|err| CronError::Scheduler(err.to_string()))?,
+            ));
+        }
+
+        self.conversation_repo
+            .update(&row.id, &update)
+            .await
+            .map_err(CronError::Database)
+    }
+
     async fn resolve_conversation_owner_user_id(&self, job: &CronJob) -> Result<String, CronError> {
         if !job.conversation_id.trim().is_empty()
             && let Some(row) = self.get_conversation_row(&job.conversation_id).await?
@@ -495,19 +569,17 @@ impl JobExecutor {
         conversation_id: &str,
         saved_skill: Option<&SavedSkillContext>,
     ) -> ExecutionResult {
-        let conversation_row = match self.get_conversation_row(conversation_id).await {
-            Ok(Some(row)) => row,
-            Ok(None) => {
-                return ExecutionResult::Error {
-                    message: format!("conversation {conversation_id} not found"),
-                };
-            }
+        let conversation_row = match self
+            .ensure_conversation_provider_model(conversation_id, job)
+            .await
+        {
+            Ok(row) => row,
             Err(e) => {
                 error!(
                     job_id = %job.id,
                     conversation_id,
                     error = %e,
-                    "Failed to load conversation row for cron model resolution"
+                    "Failed to ensure cron conversation provider model"
                 );
                 return ExecutionResult::Error { message: e.to_string() };
             }
@@ -847,6 +919,13 @@ impl JobExecutor {
         job: &CronJob,
         agent: &aionui_ai_agent::AgentInstance,
     ) -> Result<(), CronError> {
+        // FinClaw uses tool-policy presets, not ACP session modes (default/yolo/plan).
+        // Legacy cron rows may still carry `agent_config.mode`; skip before calling
+        // get_mode/set_mode, which FinClaw rejects outright.
+        if job.agent_type == "finclaw" {
+            return Ok(());
+        }
+
         let Some(desired_mode) = job
             .agent_config
             .as_ref()
@@ -949,29 +1028,33 @@ async fn parse_agent_type(registry: &AgentRegistry, agent_type_str: &str) -> Res
     Ok(AgentType::Acp)
 }
 
-/// Only aionrs conversations carry meaningful model info in `conversations.model`;
-/// ACP and other agent types ignore this field and resolve the model via their own
-/// mechanisms (catalog defaults, CLI flags, etc.). Returning `None` lets the
-/// `CreateConversationRequest.model` stay `None` for those types, which is the
-/// correct semantic.
-///
-/// For aionrs, `agent_config.backend` holds the provider_id (a DB hash, not a
-/// vendor label). `CronService::add_job`/`update_job` already rejects aionrs
-/// jobs lacking this field, so the `None` return here is defensive for any
-/// legacy in-memory row that somehow slipped through.
-fn resolve_model(job: &CronJob) -> Option<ProviderWithModel> {
-    if job.agent_type != "aionrs" {
+fn provider_model_from_cron_job_config(job: &CronJob) -> Option<ProviderWithModel> {
+    if job.agent_type != "aionrs" && job.agent_type != "finclaw" {
         return None;
     }
+
     let config = job.agent_config.as_ref()?;
-    if config.backend.trim().is_empty() {
+    let backend = config.backend.trim();
+    if backend.is_empty()
+        || backend.eq_ignore_ascii_case(&job.agent_type)
+        || is_known_agent_backend_label(backend)
+    {
         return None;
     }
+
+    let model_id = config.model_id.as_deref().filter(|value| !value.is_empty())?;
     Some(ProviderWithModel {
-        provider_id: config.backend.clone(),
-        model: config.model_id.clone().unwrap_or_else(|| "default".to_owned()),
-        use_model: None,
+        provider_id: backend.to_owned(),
+        model: model_id.to_owned(),
+        use_model: Some(model_id.to_owned()),
     })
+}
+
+/// Resolve the top-level `CreateConversationRequest.model` field for cron.
+/// Only aionrs uses the DB `model` column; FinClaw model lives in `extra.providerModel`
+/// via [`build_conversation_extra`].
+fn resolve_model(job: &CronJob) -> Option<ProviderWithModel> {
+    provider_model_from_cron_job_config(job)
 }
 
 /// Fill `extra` with the agent identity the factory should use.
@@ -1125,6 +1208,12 @@ async fn build_conversation_extra(
             && !workspace.trim().is_empty()
         {
             extra.insert("workspace".to_owned(), serde_json::Value::String(workspace.clone()));
+        }
+        if let Some(model) = provider_model_from_cron_job_config(job) {
+            extra.insert(
+                PROVIDER_MODEL_EXTRA_KEY.to_owned(),
+                provider_model_extra_value(&model),
+            );
         }
     }
 
@@ -1476,6 +1565,29 @@ mod tests {
     }
 
     #[test]
+    fn resolve_model_finclaw_with_full_config() {
+        let job = CronJob {
+            agent_type: "finclaw".into(),
+            agent_config: Some(CronAgentConfig {
+                backend: "4056cdea".into(),
+                name: "DeepSeek".into(),
+                cli_path: None,
+                is_preset: None,
+                custom_agent_id: None,
+                preset_agent_type: None,
+                mode: None,
+                model_id: Some("deepseek-v4-flash".into()),
+                config_options: None,
+                workspace: None,
+            }),
+            ..sample_job()
+        };
+        let model = resolve_model(&job).expect("finclaw config resolves for extra embedding");
+        assert_eq!(model.provider_id, "4056cdea");
+        assert_eq!(model.model, "deepseek-v4-flash");
+    }
+
+    #[test]
     fn resolve_model_aionrs_with_full_config() {
         let job = CronJob {
             agent_type: "aionrs".into(),
@@ -1499,7 +1611,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_model_aionrs_without_model_id_defaults_to_default() {
+    fn resolve_model_aionrs_without_model_id_returns_none() {
         let job = CronJob {
             agent_type: "aionrs".into(),
             agent_config: Some(CronAgentConfig {
@@ -1516,9 +1628,7 @@ mod tests {
             }),
             ..sample_job()
         };
-        let model = resolve_model(&job).expect("aionrs without model_id still returns Some");
-        assert_eq!(model.provider_id, "4056cdea");
-        assert_eq!(model.model, "default");
+        assert!(resolve_model(&job).is_none());
     }
 
     #[test]
@@ -1666,6 +1776,87 @@ mod tests {
         assert_eq!(extra["backend"], "claude");
     }
 
+    #[tokio::test]
+    async fn build_conversation_extra_embeds_provider_model_for_finclaw() {
+        let registry = hydrated_registry().await;
+        let job = CronJob {
+            execution_mode: ExecutionMode::NewConversation,
+            agent_type: "finclaw".into(),
+            agent_config: Some(CronAgentConfig {
+                backend: "provider-hash".into(),
+                name: "FinClaw".into(),
+                cli_path: None,
+                is_preset: None,
+                custom_agent_id: None,
+                preset_agent_type: None,
+                mode: None,
+                model_id: Some("deepseek-v4-pro".into()),
+                config_options: None,
+                workspace: None,
+            }),
+            ..sample_job()
+        };
+
+        let extra = build_conversation_extra(&registry, &job, None).await;
+
+        assert_eq!(
+            extra["providerModel"],
+            serde_json::json!({
+                "provider_id": "provider-hash",
+                "model": "deepseek-v4-pro",
+                "use_model": "deepseek-v4-pro",
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn build_conversation_extra_skips_invalid_finclaw_backend_label() {
+        let registry = hydrated_registry().await;
+        let job = CronJob {
+            execution_mode: ExecutionMode::NewConversation,
+            agent_type: "finclaw".into(),
+            agent_config: Some(CronAgentConfig {
+                backend: "finclaw".into(),
+                name: "FinClaw".into(),
+                cli_path: None,
+                is_preset: None,
+                custom_agent_id: None,
+                preset_agent_type: None,
+                mode: None,
+                model_id: Some("deepseek-v4-pro".into()),
+                config_options: None,
+                workspace: None,
+            }),
+            ..sample_job()
+        };
+
+        let extra = build_conversation_extra(&registry, &job, None).await;
+
+        assert!(extra.get("providerModel").is_none());
+    }
+
+    #[test]
+    fn provider_model_from_cron_job_config_rejects_vendor_backend_label() {
+        let job = CronJob {
+            agent_type: "finclaw".into(),
+            agent_config: Some(CronAgentConfig {
+                backend: "finclaw".into(),
+                name: "FinClaw".into(),
+                cli_path: None,
+                is_preset: None,
+                custom_agent_id: None,
+                preset_agent_type: None,
+                mode: None,
+                model_id: Some("deepseek-v4-pro".into()),
+                config_options: None,
+                workspace: None,
+            }),
+            ..sample_job()
+        };
+
+        assert!(provider_model_from_cron_job_config(&job).is_none());
+    }
+
     // -- execution_result display ---------------------------------------------
 
     #[test]
@@ -1687,6 +1878,28 @@ mod tests {
 
         let error = ExecutionResult::Error { message: "oops".into() };
         assert_eq!(error, ExecutionResult::Error { message: "oops".into() });
+    }
+
+    #[tokio::test]
+    async fn execute_inner_skips_session_mode_for_finclaw() {
+        let agent = Arc::new(RecordingAgent::new("conv_1", "default", true));
+        let executor = make_executor_with_agent(AgentInstance::Mock(agent.clone()));
+        let mut job = sample_job();
+        job.agent_type = "finclaw".into();
+        job.agent_config.as_mut().unwrap().mode = Some("yolo".into());
+
+        let result = executor.execute_inner(&job, "conv_1", None).await;
+
+        assert_eq!(
+            result,
+            ExecutionResult::Success {
+                conversation_id: "conv_1".into()
+            }
+        );
+        wait_for_agent_send(&agent, 1).await;
+        assert_eq!(agent.mode().await, "default");
+        assert_eq!(agent.set_mode_calls(), 0);
+        assert_eq!(agent.send_calls(), 1);
     }
 
     #[tokio::test]

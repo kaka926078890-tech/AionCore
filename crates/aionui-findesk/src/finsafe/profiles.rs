@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::env;
 use std::path::{Path, PathBuf};
 
+use aionui_runtime::SpawnWrapperMode;
+
 use crate::config::FindeskConfig;
 
 #[derive(Debug, Clone)]
@@ -11,16 +13,31 @@ pub struct ProfileContext {
     pub executable: PathBuf,
     pub cwd: Option<PathBuf>,
     pub home_dir: PathBuf,
+    pub wrapper_mode: SpawnWrapperMode,
+}
+
+/// Long-lived agent brokers (FinClaw serve, ACP SDK sessions) use
+/// `finsafe self-confine` with a 1h timeout so permission prompts and
+/// multi-step turns are not killed by the short-lived 120s cap.
+pub fn uses_interactive_program_mode(ctx: &ProfileContext) -> bool {
+    ctx.wrapper_mode == SpawnWrapperMode::InteractiveSelfConfine || ctx.backend == "finclaw"
 }
 
 impl ProfileContext {
-    pub fn from_intent(backend: Option<&str>, program: &Path, cwd: Option<&Path>, _config: &FindeskConfig) -> Self {
+    pub fn from_intent(
+        backend: Option<&str>,
+        program: &Path,
+        cwd: Option<&Path>,
+        wrapper_mode: SpawnWrapperMode,
+        _config: &FindeskConfig,
+    ) -> Self {
         let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         Self {
             backend: backend.unwrap_or("node-acp").to_string(),
             executable: program.to_path_buf(),
             cwd: cwd.map(Path::to_path_buf),
             home_dir,
+            wrapper_mode,
         }
     }
 }
@@ -223,6 +240,7 @@ mod tests {
             home_dir: PathBuf::from("/Users/tester"),
             cwd: Some(PathBuf::from("/tmp/ws")),
             executable: PathBuf::from("/Users/tester/.local/bin/hermes"),
+            wrapper_mode: SpawnWrapperMode::InteractiveSelfConfine,
         };
         let config = FindeskConfig {
             finsafe_bin: None,

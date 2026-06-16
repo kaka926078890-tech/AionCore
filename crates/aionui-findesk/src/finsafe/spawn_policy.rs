@@ -102,6 +102,7 @@ impl SpawnPolicy for FinsafeSpawnPolicy {
             intent.backend.as_deref(),
             Path::new(&intent.program),
             intent.cwd.as_deref(),
+            intent.wrapper_mode,
             &self.config,
         );
 
@@ -113,12 +114,11 @@ impl SpawnPolicy for FinsafeSpawnPolicy {
             }
         };
 
-        let finsafe_verb =
-            if intent.wrapper_mode == SpawnWrapperMode::InteractiveSelfConfine || ctx.backend == "finclaw" {
-                "self-confine"
-            } else {
-                "run"
-            };
+        let finsafe_verb = if profiles::uses_interactive_program_mode(&ctx) {
+            "self-confine"
+        } else {
+            "run"
+        };
 
         let mut run_target: Vec<OsString> = vec![intent.program.clone()];
         run_target.extend(intent.args.iter().cloned());
@@ -197,6 +197,42 @@ mod tests {
             resolved.program.to_string_lossy(),
             dir.path().join("finsafe").to_string_lossy()
         );
+        assert!(resolved.args.iter().any(|a| a == "self-confine"));
+    }
+
+    #[test]
+    fn wraps_interactive_acp_sdk_with_self_confine() {
+        let dir = tempdir().unwrap();
+        let finsafe = dir.path().join("finsafe");
+        fs::write(&finsafe, b"").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&finsafe, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        shared_finsafe_enabled().store(true, Ordering::Relaxed);
+
+        let policy = FinsafeSpawnPolicy::new(FindeskConfig {
+            finsafe_bin: Some(finsafe),
+            finsafe_policies_dir: None,
+            finclaw_bin: None,
+            cache_dir: Some(dir.path().join("cache")),
+            work_dir: Some(dir.path().join("work")),
+            log_dir: None,
+        });
+
+        let intent = SpawnIntent {
+            backend: Some("hermes".into()),
+            program: OsString::from("/bin/hermes"),
+            args: vec![OsString::from("acp")],
+            cwd: Some(dir.path().join("workspace")),
+            child_env: HashMap::new(),
+            wrapper_mode: SpawnWrapperMode::InteractiveSelfConfine,
+        };
+
+        let resolved = policy.wrap(&intent);
+        assert_ne!(resolved.program, intent.program);
         assert!(resolved.args.iter().any(|a| a == "self-confine"));
     }
 
