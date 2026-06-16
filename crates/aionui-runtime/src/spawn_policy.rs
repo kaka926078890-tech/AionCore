@@ -73,17 +73,13 @@ fn registry() -> &'static Mutex<Registry> {
 
 /// Register a spawn policy. Policies run in registration order before the implicit noop pass.
 pub fn register_spawn_policy(policy: Box<dyn SpawnPolicy>) {
-    let mut guard = registry()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = registry().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     guard.policies.push(policy);
 }
 
 /// Apply all registered policies to `intent`.
 pub fn apply_spawn_policies(intent: &SpawnIntent) -> ResolvedSpawn {
-    let guard = registry()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = registry().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let mut current = intent.clone();
     for policy in &guard.policies {
@@ -146,16 +142,16 @@ mod tests {
     fn prefix_policy_inserts_marker_arg() {
         let policy = PrefixArgPolicy { marker: "wrapped" };
         let resolved = policy.wrap(&sample_intent());
-        assert_eq!(
-            resolved.args,
-            vec![OsString::from("wrapped"), OsString::from("hello")]
-        );
+        assert_eq!(resolved.args, vec![OsString::from("wrapped"), OsString::from("hello")]);
     }
 
     #[test]
     fn register_spawn_policy_runs_before_implicit_noop() {
         register_spawn_policy(Box::new(PrefixArgPolicy { marker: "policy" }));
         let resolved = apply_spawn_policies(&sample_intent());
-        assert_eq!(resolved.args.first().map(|s| s.to_string_lossy().into_owned()), Some("policy".into()));
+        assert_eq!(
+            resolved.args.first().map(|s| s.to_string_lossy().into_owned()),
+            Some("policy".into())
+        );
     }
 }

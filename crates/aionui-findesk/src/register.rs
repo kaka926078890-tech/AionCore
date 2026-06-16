@@ -1,6 +1,6 @@
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use aionui_runtime::register_spawn_policy;
 use tracing::info;
@@ -20,9 +20,7 @@ pub fn register_from_env() -> FindeskHandles {
     let flag = shared_finsafe_enabled();
     register_spawn_policy(Box::new(FinsafeSpawnPolicy::new(config)));
     info!("[findesk] registered FinSAFE spawn policy");
-    FindeskHandles {
-        finsafe_enabled: flag,
-    }
+    FindeskHandles { finsafe_enabled: flag }
 }
 
 /// Sync the in-memory flag from persisted backend settings.

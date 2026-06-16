@@ -38,10 +38,7 @@ fn expand_home_skills_dir(relative_path: &str) -> (PathBuf, PathBuf) {
 
 fn resolve_global_claw_skills_dir(agent: &HostAgentRow) -> Option<(PathBuf, PathBuf)> {
     let backend = agent.backend.as_deref().unwrap_or(agent.agent_type.as_str());
-    if let Some((_, relative)) = EXTRA_CLAW_SKILLS_DIRS
-        .iter()
-        .find(|(key, _)| *key == backend)
-    {
+    if let Some((_, relative)) = EXTRA_CLAW_SKILLS_DIRS.iter().find(|(key, _)| *key == backend) {
         return Some(expand_home_skills_dir(relative));
     }
 
@@ -116,13 +113,11 @@ pub fn resolve_finclaw_host_context(agents: &[HostAgentRow]) -> FinclawHostConte
 
     let mut claws = Vec::new();
 
-    if let Some(finclaw_agent) = local_agents.iter().find(|agent| {
-        agent.agent_type == "finclaw" || agent.backend.as_deref() == Some("finclaw")
-    }) {
-        claws.push(build_finclaw_shared_skills_claw(
-            &finclaw_agent.name,
-            "default",
-        ));
+    if let Some(finclaw_agent) = local_agents
+        .iter()
+        .find(|agent| agent.agent_type == "finclaw" || agent.backend.as_deref() == Some("finclaw"))
+    {
+        claws.push(build_finclaw_shared_skills_claw(&finclaw_agent.name, "default"));
     }
 
     for agent in local_agents {

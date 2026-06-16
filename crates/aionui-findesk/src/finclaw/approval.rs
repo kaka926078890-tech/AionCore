@@ -76,10 +76,7 @@ pub fn parse_approval_required(parsed: &Value) -> Option<FinclawApprovalRequired
         tool_name: tool_name.to_string(),
         tool_call_id,
         arguments: source.get("arguments").cloned(),
-        reason: source
-            .get("reason")
-            .and_then(Value::as_str)
-            .map(str::to_string),
+        reason: source.get("reason").and_then(Value::as_str).map(str::to_string),
         run_id: source
             .get("run_id")
             .and_then(Value::as_str)

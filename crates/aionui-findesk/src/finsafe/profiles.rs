@@ -14,12 +14,7 @@ pub struct ProfileContext {
 }
 
 impl ProfileContext {
-    pub fn from_intent(
-        backend: Option<&str>,
-        program: &Path,
-        cwd: Option<&Path>,
-        _config: &FindeskConfig,
-    ) -> Self {
+    pub fn from_intent(backend: Option<&str>, program: &Path, cwd: Option<&Path>, _config: &FindeskConfig) -> Self {
         let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         Self {
             backend: backend.unwrap_or("node-acp").to_string(),

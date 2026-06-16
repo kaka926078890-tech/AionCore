@@ -320,9 +320,7 @@ impl AgentInstance {
             Self::Acp(m) => m.mode().await,
             Self::Aionrs(m) => m.mode().await,
             #[cfg(feature = "findesk")]
-            Self::Finclaw(_) => Err(AgentError::bad_request(
-                "Mode switching is not supported for FinClaw",
-            )),
+            Self::Finclaw(_) => Err(AgentError::bad_request("Mode switching is not supported for FinClaw")),
             #[cfg(any(test, feature = "test-support"))]
             Self::Mock(m) => m.mode().await,
         }
@@ -336,9 +334,7 @@ impl AgentInstance {
             Self::Acp(m) => m.set_mode(mode).await,
             Self::Aionrs(m) => m.set_mode(mode).await,
             #[cfg(feature = "findesk")]
-            Self::Finclaw(_) => Err(AgentError::bad_request(
-                "Mode switching is not supported for FinClaw",
-            )),
+            Self::Finclaw(_) => Err(AgentError::bad_request("Mode switching is not supported for FinClaw")),
             #[cfg(any(test, feature = "test-support"))]
             Self::Mock(m) => m.set_mode(mode).await,
         }

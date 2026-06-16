@@ -7,4 +7,4 @@ pub mod finclaw;
 pub mod finsafe;
 
 pub use config::FindeskConfig;
-pub use register::{register_from_env, sync_finsafe_enabled_from_settings, FindeskHandles};
+pub use register::{FindeskHandles, register_from_env, sync_finsafe_enabled_from_settings};

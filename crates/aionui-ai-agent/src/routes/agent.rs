@@ -12,21 +12,22 @@ use axum::Router;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Json, Path, Query, State};
 use axum::routing::{get, patch, post, put};
-use std::path::PathBuf;
 
 use aionui_api_types::{
     AcpHealthCheckRequest, AcpHealthCheckResponse, AgentMetadata, ApiResponse, CustomAgentUpsertRequest,
-    DeleteCustomAgentResponse, FinclawApplyToolPolicyRequest, FinclawApplyToolPolicyResponse, FinclawGetToolPolicyQuery,
-    FinclawHostContext, FinclawHostUser, FinclawToolPolicyResponse, ProviderHealthCheckRequest,
-    ProviderHealthCheckResponse, SetEnabledRequest, TryConnectCustomAgentRequest, TryConnectCustomAgentResponse,
+    DeleteCustomAgentResponse, FinclawApplyToolPolicyRequest, FinclawApplyToolPolicyResponse,
+    FinclawGetToolPolicyQuery, FinclawHostContext, FinclawHostUser, FinclawToolPolicyResponse,
+    ProviderHealthCheckRequest, ProviderHealthCheckResponse, SetEnabledRequest, TryConnectCustomAgentRequest,
+    TryConnectCustomAgentResponse,
 };
+use aionui_auth::CurrentUser;
+use aionui_common::ApiError;
 #[cfg(feature = "findesk")]
 use aionui_findesk::finclaw::{
     FinclawToolPolicy, HostAgentRow, apply_tool_policy_serve_overlay, finclaw_tool_policy_to_wire,
     is_finclaw_tool_policy, read_tool_policy_from_serve_overlay, resolve_finclaw_host_context, shared_gateway_pool,
+    validate_finclaw_workspace_path,
 };
-use aionui_auth::CurrentUser;
-use aionui_common::ApiError;
 
 use crate::routes::error_mapping::agent_error_to_api_error;
 use crate::routes::state::AgentRouterState;
@@ -86,17 +87,15 @@ async fn finclaw_get_tool_policy(
     if workspace.is_empty() {
         return Err(ApiError::BadRequest("workspace is required".into()));
     }
+    let serve_cwd = validate_finclaw_workspace_path(workspace).map_err(ApiError::BadRequest)?;
     let profile = query
         .profile
         .as_deref()
         .filter(|value| !value.is_empty())
         .unwrap_or("default")
         .to_string();
-    let serve_cwd = PathBuf::from(workspace);
     let policy = read_tool_policy_from_serve_overlay(&serve_cwd).unwrap_or(FinclawToolPolicy::Auto);
-    let pool_ref_count = shared_gateway_pool()
-        .ref_count_for(&profile, &serve_cwd)
-        .await;
+    let pool_ref_count = shared_gateway_pool().ref_count_for(&profile, &serve_cwd).await;
 
     Ok(Json(ApiResponse::ok(FinclawToolPolicyResponse {
         tool_policy: finclaw_tool_policy_to_wire(policy).to_string(),
@@ -125,13 +124,11 @@ async fn finclaw_apply_tool_policy(
         .filter(|value| !value.is_empty())
         .unwrap_or("default")
         .to_string();
-    let serve_cwd = PathBuf::from(workspace);
+    let serve_cwd = validate_finclaw_workspace_path(workspace).map_err(ApiError::BadRequest)?;
 
     apply_tool_policy_serve_overlay(&serve_cwd, &req.tool_policy).map_err(ApiError::BadRequest)?;
 
-    let (restarted, pool_ref_count) = shared_gateway_pool()
-        .restart_gateway(&profile, &serve_cwd)
-        .await;
+    let (restarted, pool_ref_count) = shared_gateway_pool().restart_gateway(&profile, &serve_cwd).await;
 
     Ok(Json(ApiResponse::ok(FinclawApplyToolPolicyResponse {
         tool_policy: req.tool_policy,

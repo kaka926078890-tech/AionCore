@@ -94,11 +94,7 @@ pub fn resolve_finclaw_llm_base_url(platform: &str, base_url: &str, provider: &s
 
     let open_ai_compat = resolve_openai_compat_base_url(platform, base_url)?;
     let normalized = strip_trailing_v1(&open_ai_compat);
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
+    if normalized.is_empty() { None } else { Some(normalized) }
 }
 
 pub fn build_finclaw_llm_config_slice(
@@ -122,13 +118,27 @@ pub fn build_finclaw_llm_config_slice(
     }
 }
 
+fn hash_optional_secret(value: Option<&str>) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    match value.filter(|v| !v.is_empty()) {
+        Some(secret) => {
+            let mut hasher = DefaultHasher::new();
+            secret.hash(&mut hasher);
+            format!("{:016x}", hasher.finish())
+        }
+        None => String::new(),
+    }
+}
+
 pub fn build_finclaw_model_fingerprint(slice: &FinclawLlmConfigSlice) -> String {
     format!(
         "{}\0{}\0{}\0{}",
         slice.provider,
         slice.model,
         slice.base_url.as_deref().unwrap_or(""),
-        slice.api_key.as_deref().unwrap_or(""),
+        hash_optional_secret(slice.api_key.as_deref()),
     )
 }
 
@@ -198,9 +208,7 @@ pub async fn sync_finclaw_profile_llm_config(
     if let Some(base_url) = &slice.base_url {
         finclaw_config_set(findesk, cli_path, profile, "llm.base_url", base_url).await?;
     }
-    if let Some(api_key) = &slice.api_key {
-        finclaw_config_set(findesk, cli_path, profile, "llm.api_key", api_key).await?;
-    }
+    // API keys are injected via serve env (FINCLAW_LLM_API_KEY / provider keys), not CLI args.
     Ok(())
 }
 

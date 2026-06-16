@@ -9,12 +9,10 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::config::FindeskConfig;
-use crate::finsafe::finsafe_enabled;
 use crate::finclaw::binary::resolve_finclaw_binary;
-use crate::finclaw::port_json::{
-    probe_claw_health, probe_claw_real_llm_ready, read_claw_port, stop_profile_daemon,
-};
+use crate::finclaw::port_json::{probe_claw_health, probe_claw_real_llm_ready, read_claw_port, stop_profile_daemon};
 use crate::finclaw::serve_config::prepare_workspace_skills_serve_config;
+use crate::finsafe::finsafe_enabled;
 
 #[derive(Debug, Clone)]
 pub struct FinclawGatewayConfig {
@@ -125,10 +123,7 @@ impl FinclawGateway {
     }
 
     pub fn claw_port(&self) -> Option<u16> {
-        self.claw_port
-            .try_lock()
-            .ok()
-            .and_then(|guard| *guard)
+        self.claw_port.try_lock().ok().and_then(|guard| *guard)
     }
 
     async fn wait_for_port(&self) -> Result<u16, String> {
@@ -141,10 +136,7 @@ impl FinclawGateway {
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        Err(
-            "timed out waiting for finclaw serve with a non-mock LLM provider; configure finclaw models"
-                .into(),
-        )
+        Err("timed out waiting for finclaw serve with a non-mock LLM provider; configure finclaw models".into())
     }
 
     pub async fn shutdown(&self) {

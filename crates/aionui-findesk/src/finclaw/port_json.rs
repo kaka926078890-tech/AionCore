@@ -37,7 +37,9 @@ pub fn resolve_port_json_path(profile: &str) -> PathBuf {
 }
 
 pub fn parse_port_json(raw: &str) -> Option<FinclawPortJson> {
-    serde_json::from_str::<FinclawPortJson>(raw).ok().filter(|p| p.claw_port > 0)
+    serde_json::from_str::<FinclawPortJson>(raw)
+        .ok()
+        .filter(|p| p.claw_port > 0)
 }
 
 pub fn read_port_json(profile: &str) -> Option<FinclawPortJson> {
@@ -68,9 +70,7 @@ pub async fn probe_claw_real_llm_ready(port: u16) -> bool {
         return false;
     }
     match health.providers {
-        Some(providers) => providers
-            .iter()
-            .any(|(name, enabled)| *enabled && name != "mock"),
+        Some(providers) => providers.iter().any(|(name, enabled)| *enabled && name != "mock"),
         None => true,
     }
 }
@@ -155,9 +155,7 @@ mod tests {
             return false;
         }
         match &health.providers {
-            Some(providers) => providers
-                .iter()
-                .any(|(name, enabled)| *enabled && name != "mock"),
+            Some(providers) => providers.iter().any(|(name, enabled)| *enabled && name != "mock"),
             None => true,
         }
     }

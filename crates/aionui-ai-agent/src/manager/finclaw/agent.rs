@@ -6,18 +6,17 @@ use std::sync::Arc;
 
 use aionui_api_types::FinclawBuildExtra;
 use aionui_common::{
-    decrypt_string, AgentKillReason, AgentType, Confirmation, ConfirmationOption, ConversationStatus,
-    ProviderWithModel,
+    AgentKillReason, AgentType, Confirmation, ConfirmationOption, ConversationStatus, ProviderWithModel, decrypt_string,
 };
 use aionui_db::IProviderRepository;
 use aionui_findesk::FindeskConfig;
 use aionui_findesk::finclaw::{
-    apply_tool_policy_from_extra, build_finclaw_llm_config_slice, build_finclaw_model_fingerprint,
-    ensure_finclaw_workspace_profile, prepare_finclaw_llm_for_profiles, resolve_finclaw_serve_cwd,
-    FinclawApprovalRequired, FinclawGatewayConfig, FinclawInferEvent, decision_from_confirm_data,
-    post_infer_stream, resolve_finclaw_infer_capability, shared_gateway_pool, submit_approval_resolve,
+    FinclawApprovalRequired, FinclawGatewayConfig, FinclawInferEvent, apply_tool_policy_from_extra,
+    build_finclaw_llm_config_slice, build_finclaw_model_fingerprint, decision_from_confirm_data,
+    ensure_finclaw_workspace_profile, post_infer_stream, prepare_finclaw_llm_for_profiles,
+    resolve_finclaw_infer_capability, resolve_finclaw_serve_cwd, shared_gateway_pool, submit_approval_resolve,
 };
-use futures_util::{pin_mut, StreamExt};
+use futures_util::{StreamExt, pin_mut};
 use reqwest::Client;
 use serde_json::{Map, Value, json};
 use tokio::sync::{Mutex, Notify, oneshot};
@@ -65,8 +64,8 @@ impl FinclawAgentManager {
             .filter(|p| !p.is_empty())
             .unwrap_or("default");
         let serve_cwd = resolve_finclaw_serve_cwd(&workspace);
-        let derived_profile = ensure_finclaw_workspace_profile(base_profile, &serve_cwd)
-            .map_err(AgentError::bad_request)?;
+        let derived_profile =
+            ensure_finclaw_workspace_profile(base_profile, &serve_cwd).map_err(AgentError::bad_request)?;
 
         apply_tool_policy_from_extra(&serve_cwd, config.finclaw_tool_policy.as_deref())
             .map_err(AgentError::bad_request)?;
@@ -81,12 +80,10 @@ impl FinclawAgentManager {
             .find_by_id(&model.provider_id)
             .await
             .map_err(|e| AgentError::internal(format!("Failed to load provider config: {e}")))?
-            .ok_or_else(|| {
-                AgentError::bad_request(format!("Provider '{}' not found", model.provider_id))
-            })?;
+            .ok_or_else(|| AgentError::bad_request(format!("Provider '{}' not found", model.provider_id)))?;
 
-        let api_key = decrypt_string(&row.api_key_encrypted, &encryption_key)
-            .map_err(|e| AgentError::internal(e.to_string()))?;
+        let api_key =
+            decrypt_string(&row.api_key_encrypted, &encryption_key).map_err(|e| AgentError::internal(e.to_string()))?;
 
         let model_id = model
             .use_model
@@ -123,10 +120,7 @@ impl FinclawAgentManager {
 
         let pool = shared_gateway_pool();
         let (gateway, _) = pool.acquire(gateway_config).await;
-        gateway
-            .ensure_started()
-            .await
-            .map_err(AgentError::bad_request)?;
+        gateway.ensure_started().await.map_err(AgentError::bad_request)?;
 
         Ok(Self {
             runtime: AgentRuntime::new(conversation_id, workspace, 128),
@@ -160,13 +154,7 @@ impl FinclawAgentManager {
             .unwrap_or_default()
     }
 
-    pub fn confirm(
-        &self,
-        _msg_id: &str,
-        call_id: &str,
-        data: Value,
-        _always_allow: bool,
-    ) -> Result<(), AgentError> {
+    pub fn confirm(&self, _msg_id: &str, call_id: &str, data: Value, _always_allow: bool) -> Result<(), AgentError> {
         let item = self
             .pending_approvals
             .try_lock()
@@ -179,18 +167,16 @@ impl FinclawAgentManager {
             )));
         };
 
-        let port = self.gateway.claw_port().ok_or_else(|| {
-            AgentError::bad_request("FinClaw claw_port is not available")
-        })?;
+        let port = self
+            .gateway
+            .claw_port()
+            .ok_or_else(|| AgentError::bad_request("FinClaw claw_port is not available"))?;
         let decision = decision_from_confirm_data(&data);
         let user_id = self.resolve_user_id();
         let approval = item.approval.clone();
         let http = self.http.clone();
         let session_id = self.conversation_id().to_string();
-        let reason = data
-            .get("reason")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        let reason = data.get("reason").and_then(Value::as_str).map(str::to_string);
 
         let _ = item.decision_tx.send(());
 
@@ -228,47 +214,45 @@ impl FinclawAgentManager {
             );
         }
 
-        self.runtime.emit(AgentStreamEvent::AcpPermission(
-            AcpPermissionEventData::Request(AcpPermissionRequestData {
-                session_id: self.conversation_id().to_string(),
-                tool_call: AcpPermissionToolCall {
-                    tool_call_id: call_id,
-                    status: None,
-                    title: Some(approval.tool_name.clone()),
-                    kind: None,
-                    raw_input: approval.arguments.clone(),
-                    raw_output: None,
-                    content: None,
-                    locations: None,
-                    meta: None,
+        self.runtime
+            .emit(AgentStreamEvent::AcpPermission(AcpPermissionEventData::Request(
+                AcpPermissionRequestData {
+                    session_id: self.conversation_id().to_string(),
+                    tool_call: AcpPermissionToolCall {
+                        tool_call_id: call_id,
+                        status: None,
+                        title: Some(approval.tool_name.clone()),
+                        kind: None,
+                        raw_input: approval.arguments.clone(),
+                        raw_output: None,
+                        content: None,
+                        locations: None,
+                        meta: None,
+                    },
+                    options: vec![
+                        AcpPermissionOptionData {
+                            option_id: "allow_once".into(),
+                            name: "Allow".into(),
+                            kind: AcpPermissionOptionKind::AllowOnce,
+                            meta: None,
+                        },
+                        AcpPermissionOptionData {
+                            option_id: "reject_once".into(),
+                            name: "Reject".into(),
+                            kind: AcpPermissionOptionKind::RejectOnce,
+                            meta: None,
+                        },
+                    ],
+                    meta: Some({
+                        let mut meta = Map::new();
+                        meta.insert("finclawApprovalRequestId".into(), json!(approval.approval_request_id));
+                        if let Some(run_id) = &approval.run_id {
+                            meta.insert("finclawRunId".into(), json!(run_id));
+                        }
+                        meta
+                    }),
                 },
-                options: vec![
-                    AcpPermissionOptionData {
-                        option_id: "allow_once".into(),
-                        name: "Allow".into(),
-                        kind: AcpPermissionOptionKind::AllowOnce,
-                        meta: None,
-                    },
-                    AcpPermissionOptionData {
-                        option_id: "reject_once".into(),
-                        name: "Reject".into(),
-                        kind: AcpPermissionOptionKind::RejectOnce,
-                        meta: None,
-                    },
-                ],
-                meta: Some({
-                    let mut meta = Map::new();
-                    meta.insert(
-                        "finclawApprovalRequestId".into(),
-                        json!(approval.approval_request_id),
-                    );
-                    if let Some(run_id) = &approval.run_id {
-                        meta.insert("finclawRunId".into(), json!(run_id));
-                    }
-                    meta
-                }),
-            }),
-        ));
+            )));
 
         tokio::select! {
             _ = decision_rx => Ok(()),
@@ -339,9 +323,7 @@ impl IAgentTask for FinclawAgentManager {
 
     async fn send_message(&self, data: SendMessageData) -> Result<(), AgentSendError> {
         let port = self.gateway.claw_port().ok_or_else(|| {
-            AgentSendError::from_agent_error(AgentError::bad_request(
-                "FinClaw claw_port is not available",
-            ))
+            AgentSendError::from_agent_error(AgentError::bad_request("FinClaw claw_port is not available"))
         })?;
 
         info!(
@@ -353,8 +335,7 @@ impl IAgentTask for FinclawAgentManager {
         self.runtime.reset_for_new_turn(ConversationStatus::Running);
 
         let user_id = self.resolve_user_id();
-        let capability =
-            resolve_finclaw_infer_capability(self.config.session_mode.as_deref()).to_string();
+        let capability = resolve_finclaw_infer_capability(self.config.session_mode.as_deref()).to_string();
         let max_tokens = self.config.max_tokens;
 
         let stream = post_infer_stream(

@@ -6,7 +6,7 @@ use tracing::warn;
 
 use crate::config::{FindeskConfig, path_exists};
 use crate::finsafe::enabled::finsafe_enabled;
-use crate::finsafe::policy::{pick_env_for_sandbox, resolve_runtime_policy_path};
+use crate::finsafe::policy::resolve_runtime_policy_path;
 use crate::finsafe::profiles::{self, ProfileContext};
 
 #[derive(Debug, Clone)]
@@ -60,6 +60,33 @@ fn env_command_path() -> &'static str {
     }
 }
 
+fn non_secret_env_pairs(child_env: &std::collections::HashMap<String, String>) -> Vec<String> {
+    crate::finsafe::policy::pick_non_secret_env_for_sandbox(child_env)
+}
+
+fn spawn_denied(intent: &SpawnIntent, reason: &str) -> ResolvedSpawn {
+    warn!(reason, "[FinSAFE] refusing spawn");
+    let mut child_env = intent.child_env.clone();
+    child_env.insert("AIONCORE_SPAWN_DENIED".into(), "1".into());
+    child_env.insert("AIONCORE_SPAWN_DENIED_REASON".into(), reason.into());
+
+    #[cfg(unix)]
+    let program = OsString::from("/usr/bin/false");
+    #[cfg(windows)]
+    let program = OsString::from("cmd");
+    #[cfg(windows)]
+    let args = vec![OsString::from("/C"), OsString::from("exit"), OsString::from("1")];
+    #[cfg(not(windows))]
+    let args = Vec::new();
+
+    ResolvedSpawn {
+        program,
+        args,
+        cwd: intent.cwd.clone(),
+        child_env,
+    }
+}
+
 impl SpawnPolicy for FinsafeSpawnPolicy {
     fn wrap(&self, intent: &SpawnIntent) -> ResolvedSpawn {
         if !should_wrap(intent) {
@@ -67,8 +94,8 @@ impl SpawnPolicy for FinsafeSpawnPolicy {
         }
 
         let Some(finsafe_bin) = self.config.finsafe_bin.as_ref().filter(|p| path_exists(p)) else {
-            warn!("[FinSAFE] finsafe binary not configured; spawning without wrapper");
-            return intent.resolve_unchanged();
+            warn!("[FinSAFE] finsafe binary not configured");
+            return spawn_denied(intent, "finsafe binary not configured");
         };
 
         let ctx = ProfileContext::from_intent(
@@ -81,18 +108,17 @@ impl SpawnPolicy for FinsafeSpawnPolicy {
         let policy_path = match resolve_runtime_policy_path(&ctx, &self.config) {
             Ok(path) => path,
             Err(error) => {
-                warn!(?error, "[FinSAFE] failed to write runtime policy; spawning without wrapper");
-                return intent.resolve_unchanged();
+                warn!(?error, "[FinSAFE] failed to write runtime policy");
+                return spawn_denied(intent, "failed to write runtime finsafe policy");
             }
         };
 
-        let finsafe_verb = if intent.wrapper_mode == SpawnWrapperMode::InteractiveSelfConfine
-            || ctx.backend == "finclaw"
-        {
-            "self-confine"
-        } else {
-            "run"
-        };
+        let finsafe_verb =
+            if intent.wrapper_mode == SpawnWrapperMode::InteractiveSelfConfine || ctx.backend == "finclaw" {
+                "self-confine"
+            } else {
+                "run"
+            };
 
         let mut run_target: Vec<OsString> = vec![intent.program.clone()];
         run_target.extend(intent.args.iter().cloned());
@@ -103,7 +129,7 @@ impl SpawnPolicy for FinsafeSpawnPolicy {
             OsString::from(finsafe_verb),
         ];
 
-        let env_pairs = pick_env_for_sandbox(&intent.child_env);
+        let env_pairs = non_secret_env_pairs(&intent.child_env);
         if !env_pairs.is_empty() && !cfg!(target_os = "windows") {
             finsafe_args.push(OsString::from(env_command_path()));
             finsafe_args.extend(env_pairs.into_iter().map(OsString::from));
@@ -155,7 +181,11 @@ mod tests {
         let intent = SpawnIntent {
             backend: Some("finclaw".into()),
             program: OsString::from("/bin/finclaw"),
-            args: vec![OsString::from("serve"), OsString::from("--profile"), OsString::from("default")],
+            args: vec![
+                OsString::from("serve"),
+                OsString::from("--profile"),
+                OsString::from("default"),
+            ],
             cwd: Some(dir.path().join("workspace")),
             child_env: HashMap::new(),
             wrapper_mode: SpawnWrapperMode::InteractiveSelfConfine,
@@ -163,7 +193,10 @@ mod tests {
 
         let resolved = policy.wrap(&intent);
         assert_ne!(resolved.program, intent.program);
-        assert_eq!(resolved.program.to_string_lossy(), dir.path().join("finsafe").to_string_lossy());
+        assert_eq!(
+            resolved.program.to_string_lossy(),
+            dir.path().join("finsafe").to_string_lossy()
+        );
         assert!(resolved.args.iter().any(|a| a == "self-confine"));
     }
 

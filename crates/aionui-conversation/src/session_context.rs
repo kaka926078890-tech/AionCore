@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use aionui_ai_agent::session_context::{
-    AcpSessionBuildContext, AgentSessionContext, AgentSessionKind, AionrsSessionBuildContext,
-    FinclawSessionBuildContext, ConversationContext, WorkspaceContext,
+    AcpSessionBuildContext, AgentSessionContext, AgentSessionKind, AionrsSessionBuildContext, ConversationContext,
+    FinclawSessionBuildContext, WorkspaceContext,
 };
 use aionui_ai_agent::shared_kernel::{ConfigKey, ConfigValue, ModeId, ModelId, PersistedSessionState};
 use aionui_ai_agent::types::BuildTaskOptions;
@@ -158,8 +158,7 @@ impl<'a> SessionContextBuilder<'a> {
             AgentType::Aionrs => Ok(AgentSessionKind::Aionrs(Box::new(build_aionrs_context(row, extra)))),
             AgentType::Finclaw => Ok(AgentSessionKind::Finclaw(Box::new(build_finclaw_context(row, extra)))),
             AgentType::Cloud => Err(ConversationError::BadRequest {
-                reason: "Cloud conversations are executed in the desktop renderer; use FinDesk cloud runtime."
-                    .into(),
+                reason: "Cloud conversations are executed in the desktop renderer; use FinDesk cloud runtime.".into(),
             }),
             AgentType::Gemini
             | AgentType::Codex

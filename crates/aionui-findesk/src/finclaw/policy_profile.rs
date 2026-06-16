@@ -47,8 +47,8 @@ pub fn resolve_finclaw_tool_policy_display(
 
 /// Write `presets.tool` into the workspace serve overlay consumed by `finclaw serve --config`.
 pub fn apply_tool_policy_serve_overlay(workspace: &Path, policy: &str) -> Result<(), String> {
-    let preset = finclaw_tool_policy_to_preset(policy)
-        .ok_or_else(|| format!("unknown finclaw tool policy: {policy}"))?;
+    let preset =
+        finclaw_tool_policy_to_preset(policy).ok_or_else(|| format!("unknown finclaw tool policy: {policy}"))?;
 
     let finclaw_dir = workspace.join(".finclaw");
     std::fs::create_dir_all(&finclaw_dir).map_err(|e| e.to_string())?;
@@ -80,10 +80,7 @@ pub fn apply_tool_policy_serve_overlay(workspace: &Path, policy: &str) -> Result
 }
 
 /// Apply `finclaw_tool_policy` from conversation extra before serve starts.
-pub fn apply_tool_policy_from_extra(
-    workspace: &Path,
-    finclaw_tool_policy: Option<&str>,
-) -> Result<(), String> {
+pub fn apply_tool_policy_from_extra(workspace: &Path, finclaw_tool_policy: Option<&str>) -> Result<(), String> {
     let Some(policy) = finclaw_tool_policy.filter(|p| !p.is_empty() && is_finclaw_tool_policy(p)) else {
         return Ok(());
     };
@@ -134,10 +131,7 @@ mod tests {
 
     #[test]
     fn maps_policy_to_preset() {
-        assert_eq!(
-            finclaw_tool_policy_to_preset("supervised"),
-            Some("ask_for_writes")
-        );
+        assert_eq!(finclaw_tool_policy_to_preset("supervised"), Some("ask_for_writes"));
         assert_eq!(finclaw_tool_policy_to_preset("auto"), Some("auto_all"));
         assert_eq!(finclaw_tool_policy_to_preset("readonly"), Some("deny_all"));
     }

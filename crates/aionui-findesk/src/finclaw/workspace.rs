@@ -14,9 +14,7 @@ pub fn resolve_finclaw_serve_cwd(workspace: &str) -> PathBuf {
 }
 
 pub fn derive_finclaw_workspace_profile(base_profile: &str, serve_cwd: &Path) -> String {
-    let resolved = serve_cwd
-        .canonicalize()
-        .unwrap_or_else(|_| serve_cwd.to_path_buf());
+    let resolved = serve_cwd.canonicalize().unwrap_or_else(|_| serve_cwd.to_path_buf());
     let mut hasher = Sha256::new();
     hasher.update(resolved.to_string_lossy().as_bytes());
     let hash = format!("{:x}", hasher.finalize());

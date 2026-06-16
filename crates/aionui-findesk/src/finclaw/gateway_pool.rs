@@ -87,12 +87,7 @@ impl FinclawGatewayPool {
     }
 
     pub async fn total_ref_count(&self) -> usize {
-        self.entries
-            .lock()
-            .await
-            .values()
-            .map(|entry| entry.ref_count)
-            .sum()
+        self.entries.lock().await.values().map(|entry| entry.ref_count).sum()
     }
 
     /// Shut down the pooled gateway for `profile` + `serve_cwd` so the next acquire respawns with fresh config.
@@ -118,9 +113,7 @@ pub fn shared_gateway_pool() -> &'static FinclawGatewayPool {
 }
 
 fn pool_key(profile: &str, serve_cwd: &Path) -> PoolKey {
-    let cwd = serve_cwd
-        .canonicalize()
-        .unwrap_or_else(|_| serve_cwd.to_path_buf());
+    let cwd = serve_cwd.canonicalize().unwrap_or_else(|_| serve_cwd.to_path_buf());
     PoolKey {
         profile: profile.to_string(),
         cwd,

@@ -1628,9 +1628,8 @@ impl ConversationService {
             });
         }
 
-        let content = serde_json::to_string(&req.content).map_err(|e| {
-            ConversationError::internal(format!("Failed to serialize message content: {e}"))
-        })?;
+        let content = serde_json::to_string(&req.content)
+            .map_err(|e| ConversationError::internal(format!("Failed to serialize message content: {e}")))?;
 
         let existing = self
             .conversation_repo
@@ -1643,9 +1642,7 @@ impl ConversationService {
                 status: Some(req.status.clone()),
                 hidden: Some(req.hidden),
             };
-            self.conversation_repo
-                .update_message(&existing_row.id, &update)
-                .await?;
+            self.conversation_repo.update_message(&existing_row.id, &update).await?;
         } else {
             let message_row = MessageRow {
                 id: req.msg_id.clone(),

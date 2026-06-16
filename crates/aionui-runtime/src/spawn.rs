@@ -343,10 +343,7 @@ impl Builder {
             .get_envs()
             .filter_map(|(key, value)| {
                 let value = value?;
-                Some((
-                    key.to_string_lossy().into_owned(),
-                    value.to_string_lossy().into_owned(),
-                ))
+                Some((key.to_string_lossy().into_owned(), value.to_string_lossy().into_owned()))
             })
             .collect::<HashMap<String, String>>();
 

@@ -13,13 +13,7 @@ fn is_read_only_alias(lower: &str) -> bool {
 fn is_coding_ui_alias(lower: &str) -> bool {
     matches!(
         lower,
-        "yolo"
-            | "bypasspermissions"
-            | "build"
-            | "auto"
-            | "autoedit"
-            | "auto_edit"
-            | "acceptedits"
+        "yolo" | "bypasspermissions" | "build" | "auto" | "autoedit" | "auto_edit" | "acceptedits"
     )
 }
 

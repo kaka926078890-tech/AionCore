@@ -108,10 +108,7 @@ mod tests {
             prompt: None,
             enabled: Some(true),
         };
-        assert_eq!(
-            map_cron_entry_to_job_name(&entry, "default"),
-            "finclaw:default:job-1"
-        );
+        assert_eq!(map_cron_entry_to_job_name(&entry, "default"), "finclaw:default:job-1");
     }
 
     #[test]

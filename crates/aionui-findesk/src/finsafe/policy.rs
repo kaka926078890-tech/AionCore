@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::config::FindeskConfig;
 use crate::finsafe::profiles::{self, ProfileContext};
 
-const FINSAFE_PASSTHROUGH_ENV_KEYS: &[&str] = &[
+const FINSAFE_SECRET_ENV_KEYS: &[&str] = &[
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
     "API_KEY",
@@ -13,10 +13,20 @@ const FINSAFE_PASSTHROUGH_ENV_KEYS: &[&str] = &[
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
-    "AWS_REGION",
-    "AWS_PROFILE",
     "GOOGLE_API_KEY",
     "GEMINI_API_KEY",
+    "FINCLAW_LLM_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "OPENROUTER_API_KEY",
+    "DASHSCOPE_API_KEY",
+    "MOONSHOT_API_KEY",
+    "MINIMAX_API_KEY",
+    "ZHIPUAI_API_KEY",
+];
+
+const FINSAFE_PASSTHROUGH_ENV_KEYS: &[&str] = &[
+    "AWS_REGION",
+    "AWS_PROFILE",
     "BUN_INSTALL_CACHE_DIR",
     "BUN_TMPDIR",
     "TMP",
@@ -136,8 +146,20 @@ pub fn resolve_runtime_policy_path(ctx: &ProfileContext, config: &FindeskConfig)
 }
 
 pub fn pick_env_for_sandbox(child_env: &std::collections::HashMap<String, String>) -> Vec<String> {
+    pick_env_keys_for_sandbox(child_env, FINSAFE_PASSTHROUGH_ENV_KEYS)
+}
+
+/// Non-secret env vars may be passed via `/usr/bin/env` argv; secrets stay in `child_env` only.
+pub fn pick_non_secret_env_for_sandbox(child_env: &std::collections::HashMap<String, String>) -> Vec<String> {
+    pick_env_keys_for_sandbox(child_env, FINSAFE_PASSTHROUGH_ENV_KEYS)
+}
+
+fn pick_env_keys_for_sandbox(child_env: &std::collections::HashMap<String, String>, keys: &[&str]) -> Vec<String> {
     let mut pairs = Vec::new();
-    for key in FINSAFE_PASSTHROUGH_ENV_KEYS {
+    for key in keys {
+        if FINSAFE_SECRET_ENV_KEYS.contains(key) {
+            continue;
+        }
         if let Some(value) = child_env.get(*key)
             && !value.is_empty()
         {
@@ -176,5 +198,14 @@ mod tests {
             yaml.contains("degrade:\n  allow_fallback: true"),
             "degrade.allow_fallback must be nested YAML; got:\n{yaml}"
         );
+    }
+
+    #[test]
+    fn non_secret_env_pairs_exclude_api_keys() {
+        let mut env = std::collections::HashMap::new();
+        env.insert("OPENAI_API_KEY".into(), "sk-secret".into());
+        env.insert("PATH".into(), "/usr/bin".into());
+        let pairs = pick_non_secret_env_for_sandbox(&env);
+        assert_eq!(pairs, vec!["PATH=/usr/bin"]);
     }
 }

@@ -28,11 +28,7 @@ pub const PROVIDER_MODEL_EXTRA_KEY: &str = "providerModel";
 /// Returns an empty `ProviderWithModel { provider_id: "", model: "", use_model: None }`
 /// when neither the `model` column nor `extra.providerModel` is parseable.
 pub fn provider_model_from_conversation_row(row: &ConversationRow) -> ProviderWithModel {
-    if let Some(parsed) = row
-        .model
-        .as_deref()
-        .and_then(parse_provider_with_model_loose)
-    {
+    if let Some(parsed) = row.model.as_deref().and_then(parse_provider_with_model_loose) {
         return parsed;
     }
 
@@ -146,10 +142,7 @@ mod tests {
     #[test]
     fn column_model_takes_precedence_over_extra_provider_model() {
         let extra = r#"{"providerModel":{"provider_id":"from-extra","model":"m1"}}"#;
-        let row = row_with_model_and_extra(
-            Some(r#"{"provider_id":"from-column","model":"m2"}"#),
-            extra,
-        );
+        let row = row_with_model_and_extra(Some(r#"{"provider_id":"from-column","model":"m2"}"#), extra);
         let m = provider_model_from_conversation_row(&row);
         assert_eq!(m.provider_id, "from-column");
         assert_eq!(m.model, "m2");

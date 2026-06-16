@@ -73,9 +73,7 @@ async fn build_agent(deps: Arc<AgentFactoryDeps>, options: BuildTaskOptions) -> 
         #[cfg(feature = "findesk")]
         AgentSessionKind::Finclaw(finclaw_context) => finclaw::build(deps, *finclaw_context, model, ctx).await,
         #[cfg(not(feature = "findesk"))]
-        AgentSessionKind::Finclaw(_) => Err(AgentError::bad_request(
-            "FinClaw agent requires the findesk feature",
-        )),
+        AgentSessionKind::Finclaw(_) => Err(AgentError::bad_request("FinClaw agent requires the findesk feature")),
     }
 }
 

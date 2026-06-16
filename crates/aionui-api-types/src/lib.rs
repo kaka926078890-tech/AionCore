@@ -15,8 +15,8 @@ mod conversation;
 mod cron;
 mod custom_agent;
 mod extension;
-mod finclaw;
 mod file;
+mod finclaw;
 mod lifecycle;
 mod mcp;
 mod office;
@@ -70,8 +70,8 @@ pub use conversation::{
     ConversationArtifactStatus, ConversationListResponse, ConversationMcpStatus, ConversationMcpStatusKind,
     ConversationResponse, ConversationRuntimeStateKind, ConversationRuntimeSummary, CreateConversationRequest,
     ListConversationsQuery, ListMessagesQuery, MessageListResponse, MessageResponse, MessageSearchItem,
-    MessageSearchResponse, SearchMessagesQuery, SendMessageRequest, SendMessageResponse, UpsertCloudMessageRequest,
-    UpdateConversationArtifactRequest, UpdateConversationRequest,
+    MessageSearchResponse, SearchMessagesQuery, SendMessageRequest, SendMessageResponse,
+    UpdateConversationArtifactRequest, UpdateConversationRequest, UpsertCloudMessageRequest,
 };
 pub use cron::{
     CreateCronJobRequest, CronAgentConfigDto, CronJobExecutedEvent, CronJobMetadataDto, CronJobPayloadDto,
@@ -80,10 +80,6 @@ pub use cron::{
 };
 pub use custom_agent::{
     CustomAgentAdvancedOverrides, CustomAgentUpsertRequest, DeleteCustomAgentResponse, SetEnabledRequest,
-};
-pub use finclaw::{
-    FinclawApplyToolPolicyRequest, FinclawApplyToolPolicyResponse, FinclawGetToolPolicyQuery, FinclawHostClaw,
-    FinclawHostContext, FinclawHostUser, FinclawToolPolicyResponse, FinclawToolPolicySnapshot,
 };
 pub use extension::{
     DisableExtensionRequest, EnableExtensionRequest, ExtensionSummaryResponse, GetI18nRequest, GetPermissionsRequest,
@@ -98,6 +94,10 @@ pub use file::{
     SnapshotCompareResponse, SnapshotDiscardRequest, SnapshotInfoResponse, SnapshotMode, SnapshotStageRequest,
     SnapshotWorkspaceRequest, WorkspaceFlatFileResponse, WorkspaceOfficeWatchRequest, WriteFileRequest, ZipFileEntry,
     ZipRequest,
+};
+pub use finclaw::{
+    FinclawApplyToolPolicyRequest, FinclawApplyToolPolicyResponse, FinclawGetToolPolicyQuery, FinclawHostClaw,
+    FinclawHostContext, FinclawHostUser, FinclawToolPolicyResponse, FinclawToolPolicySnapshot,
 };
 pub use lifecycle::{GitHubReleaseAsset, SystemInfoResponse, UpdateCheckRequest, UpdateCheckResult, UpdateReleaseInfo};
 pub use mcp::{

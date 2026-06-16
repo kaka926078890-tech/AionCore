@@ -11,6 +11,7 @@ mod policy_profile;
 mod port_json;
 mod serve_config;
 mod workspace;
+mod workspace_validate;
 
 pub use approval::{
     FinclawApprovalDecision, FinclawApprovalRequired, decision_from_confirm_data, parse_approval_required,
@@ -24,12 +25,11 @@ pub use cron_sync::{
 pub use gateway::{FinclawGateway, FinclawGatewayConfig};
 pub use gateway_pool::{FinclawGatewayPool, shared_gateway_pool};
 pub use host_context::{HostAgentRow, resolve_finclaw_host_context};
-pub use infer::{post_infer_stream, FinclawInferEvent};
+pub use infer::{FinclawInferEvent, post_infer_stream};
 pub use llm_config::{
-    build_finclaw_llm_config_slice, build_finclaw_model_fingerprint, prepare_finclaw_llm_for_profiles,
-    FinclawLlmConfigSlice,
+    FinclawLlmConfigSlice, build_finclaw_llm_config_slice, build_finclaw_model_fingerprint,
+    prepare_finclaw_llm_for_profiles,
 };
-pub use workspace::{derive_finclaw_workspace_profile, ensure_finclaw_workspace_profile, resolve_finclaw_serve_cwd};
 pub use policy_profile::{
     FinclawToolPolicy, apply_tool_policy_from_extra, apply_tool_policy_serve_overlay, finclaw_preset_to_tool_policy,
     finclaw_tool_policy_to_preset, finclaw_tool_policy_to_wire, is_finclaw_tool_policy,
@@ -39,3 +39,5 @@ pub use port_json::{
     probe_claw_health, probe_claw_real_llm_ready, read_claw_port, read_port_json, resolve_port_json_path,
     stop_profile_daemon,
 };
+pub use workspace::{derive_finclaw_workspace_profile, ensure_finclaw_workspace_profile, resolve_finclaw_serve_cwd};
+pub use workspace_validate::{is_path_within_root, validate_finclaw_workspace_path};
