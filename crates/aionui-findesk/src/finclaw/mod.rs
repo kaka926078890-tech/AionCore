@@ -25,15 +25,14 @@ pub use cron_sync::{
 pub use gateway::{FinclawGateway, FinclawGatewayConfig};
 pub use gateway_pool::{FinclawGatewayPool, shared_gateway_pool};
 pub use host_context::{HostAgentRow, resolve_finclaw_host_context};
-pub use infer::{FinclawInferEvent, post_infer_stream};
+pub use infer::{FinclawInferEvent, FinclawToolProgressEvent, post_infer_stream};
 pub use llm_config::{
     FinclawLlmConfigSlice, build_finclaw_llm_config_slice, build_finclaw_model_fingerprint,
     prepare_finclaw_llm_for_profiles,
 };
 pub use policy_profile::{
-    FinclawToolPolicy, apply_tool_policy_from_extra, apply_tool_policy_serve_overlay, finclaw_preset_to_tool_policy,
-    finclaw_tool_policy_to_preset, finclaw_tool_policy_to_wire, is_finclaw_tool_policy,
-    read_tool_policy_from_serve_overlay, resolve_finclaw_tool_policy_display,
+    FinclawToolPolicy, apply_tool_policy_from_extra, apply_tool_policy_serve_overlay, finclaw_tool_policy_to_wire,
+    is_finclaw_tool_policy, read_tool_policy_from_serve_overlay, resolve_finclaw_tool_policy_display,
 };
 pub use port_json::{
     probe_claw_health, probe_claw_real_llm_ready, read_claw_port, read_port_json, resolve_port_json_path,

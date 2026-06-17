@@ -747,8 +747,6 @@ pub async fn link_workspace_skills(
         for skill in skills {
             let target = target_skills_dir.join(&skill.name);
             match tokio::fs::symlink_metadata(&target).await {
-                // Target already exists — leave it alone.
-                Ok(_) => continue,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => {
                     warn!(
@@ -758,6 +756,21 @@ pub async fn link_workspace_skills(
                     );
                     continue;
                 }
+                Ok(meta) if meta.is_symlink() => {
+                    if skill_directory_is_usable(&target) {
+                        continue;
+                    }
+                    if let Err(e) = tokio::fs::remove_file(&target).await {
+                        warn!(
+                            target = %target.display(),
+                            error = %e,
+                            "skipping skill link: failed to remove broken symlink"
+                        );
+                        continue;
+                    }
+                }
+                Ok(_) if skill_directory_is_usable(&target) => continue,
+                Ok(_) => continue,
             }
             match link_skill_or_fallback_copy(&skill.source_path, &target).await {
                 Ok(()) => {
@@ -802,7 +815,67 @@ fn resolve_skill_source_path(paths: &SkillPaths, name: &str) -> Option<PathBuf> 
     if cron.is_dir() {
         return Some(cron);
     }
+    if name == "office-cli" {
+        return resolve_skill_source_path(paths, "officecli");
+    }
     None
+}
+
+fn skill_directory_is_usable(skill_dir: &Path) -> bool {
+    skill_dir.join(SKILL_MANIFEST_FILE).is_file()
+}
+
+/// Re-link broken skill symlinks in `skills_dir` using current builtin/user sources.
+///
+/// Only touches entries that are symlinks whose target no longer exposes `SKILL.md`.
+/// Returns the number of symlinks repaired.
+pub async fn repair_broken_skill_symlinks_in_dir(
+    skills_dir: &Path,
+    paths: &SkillPaths,
+) -> Result<usize, ExtensionError> {
+    let mut repaired = 0usize;
+    let mut entries = match tokio::fs::read_dir(skills_dir).await {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(ExtensionError::Io(e)),
+    };
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let entry_path = entry.path();
+        let Ok(meta) = entry.metadata().await else {
+            continue;
+        };
+        if !meta.is_symlink() {
+            continue;
+        }
+        if skill_directory_is_usable(&entry_path) {
+            continue;
+        }
+
+        let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(source) = resolve_skill_source_path(paths, name) else {
+            warn!(
+                skill = name,
+                link = %entry_path.display(),
+                "skipping broken skill symlink repair: no source directory found"
+            );
+            continue;
+        };
+
+        tokio::fs::remove_file(&entry_path).await?;
+        link_skill_or_fallback_copy(&source, &entry_path).await?;
+        debug!(
+            skill = name,
+            link = %entry_path.display(),
+            source = %source.display(),
+            "repaired broken skill symlink"
+        );
+        repaired += 1;
+    }
+
+    Ok(repaired)
 }
 
 // ---------------------------------------------------------------------------
@@ -2345,6 +2418,58 @@ mod tests {
             .unwrap();
         assert!(!paths.data_dir.join("agent-skills").exists());
         assert!(!paths.data_dir.join("conversations").exists());
+    }
+
+    // -----------------------------------------------------------------------
+    // Broken symlink repair + relink
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn repair_broken_skill_symlinks_relinks_from_auto_inject() {
+        let tmp = TempDir::new().unwrap();
+        let paths = make_embedded_paths(tmp.path()).await;
+        let skills_dir = tmp.path().join("profile-skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+
+        let dead_target = tmp.path().join("missing-builtin").join("cron");
+        let broken = skills_dir.join("cron");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&dead_target, &broken).unwrap();
+
+        let repaired = repair_broken_skill_symlinks_in_dir(&skills_dir, &paths)
+            .await
+            .expect("repair should succeed");
+        assert_eq!(repaired, 1);
+        assert!(broken.join(SKILL_MANIFEST_FILE).is_file());
+    }
+
+    #[tokio::test]
+    async fn link_workspace_skills_replaces_broken_symlink() {
+        let tmp = TempDir::new().unwrap();
+        let paths = make_embedded_paths(tmp.path()).await;
+        let workspace = tmp.path().join("workspace");
+        let skills_dir = workspace.join(".finclaw").join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+
+        let dead_target = tmp.path().join("missing-builtin").join("cron");
+        let broken = skills_dir.join("cron");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&dead_target, &broken).unwrap();
+
+        let auto_source = paths
+            .builtin_skills_dir
+            .join(BUILTIN_AUTO_SKILLS_SUBDIR)
+            .join("cron");
+        let resolved = vec![ResolvedAgentSkill {
+            name: "cron".to_owned(),
+            source_path: auto_source,
+        }];
+
+        let created = link_workspace_skills(&workspace, &[".finclaw/skills"], &resolved)
+            .await
+            .expect("link should succeed");
+        assert_eq!(created, 1);
+        assert!(broken.join(SKILL_MANIFEST_FILE).is_file());
     }
 
     // -----------------------------------------------------------------------

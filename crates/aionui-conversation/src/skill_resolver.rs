@@ -77,6 +77,33 @@ impl SkillResolver for ExtensionSkillResolver {
         if rel_dirs.is_empty() || skills.is_empty() {
             return 0;
         }
+
+        for rel in rel_dirs {
+            let skills_dir = workspace.join(rel);
+            if let Err(e) = aionui_extension::repair_broken_skill_symlinks_in_dir(&skills_dir, &self.paths).await {
+                tracing::warn!(
+                    skills_dir = %skills_dir.display(),
+                    error = %e,
+                    "repair_broken_skill_symlinks_in_dir failed before workspace link"
+                );
+            }
+        }
+
+        if rel_dirs.iter().any(|rel| *rel == ".finclaw/skills")
+            && let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from)
+        {
+            let finclaw_profile_skills = home.join(".finclaw").join("profiles").join("default").join("skills");
+            if let Err(e) =
+                aionui_extension::repair_broken_skill_symlinks_in_dir(&finclaw_profile_skills, &self.paths).await
+            {
+                tracing::warn!(
+                    skills_dir = %finclaw_profile_skills.display(),
+                    error = %e,
+                    "repair_broken_skill_symlinks_in_dir failed for finclaw profile skills"
+                );
+            }
+        }
+
         match aionui_extension::link_workspace_skills(workspace, rel_dirs, skills).await {
             Ok(n) => n,
             Err(e) => {

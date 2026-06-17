@@ -11,7 +11,8 @@ use aionui_common::{
 use aionui_db::IProviderRepository;
 use aionui_findesk::FindeskConfig;
 use aionui_findesk::finclaw::{
-    FinclawApprovalRequired, FinclawGatewayConfig, FinclawInferEvent, apply_tool_policy_from_extra,
+    FinclawApprovalRequired, FinclawGatewayConfig, FinclawInferEvent, FinclawToolProgressEvent,
+    apply_tool_policy_from_extra,
     build_finclaw_llm_config_slice, build_finclaw_model_fingerprint, decision_from_confirm_data,
     ensure_finclaw_workspace_profile, post_infer_stream, prepare_finclaw_llm_for_profiles,
     resolve_finclaw_infer_capability, resolve_finclaw_serve_cwd, shared_gateway_pool, submit_approval_resolve,
@@ -26,8 +27,10 @@ use crate::agent_runtime::AgentRuntime;
 use crate::agent_task::IAgentTask;
 use crate::error::AgentError;
 use crate::protocol::events::{
+    AcpToolCallContentItem, AcpToolCallEventData, AcpToolCallKind, AcpToolCallSessionUpdateKind, AcpToolCallStatus,
+    AcpToolCallTextBlock, AcpToolCallTextBlockType, AcpToolCallUpdateData,
     AcpPermissionEventData, AcpPermissionOptionData, AcpPermissionOptionKind, AcpPermissionRequestData,
-    AcpPermissionToolCall, AgentStreamEvent, TextEventData,
+    AcpPermissionToolCall, AgentStreamEvent, TextEventData, ThinkingEventData,
 };
 use crate::protocol::send_error::AgentSendError;
 use crate::types::SendMessageData;
@@ -295,6 +298,77 @@ fn approval_to_confirmation(approval: &FinclawApprovalRequired) -> Confirmation 
     }
 }
 
+fn map_finclaw_tool_status(status: Option<&str>) -> AcpToolCallStatus {
+    let normalized = status.unwrap_or("in_progress").to_ascii_lowercase();
+    match normalized.as_str() {
+        "pending" | "queued" => AcpToolCallStatus::Pending,
+        "completed" | "done" | "success" | "succeeded" => AcpToolCallStatus::Completed,
+        "failed" | "error" | "cancelled" | "canceled" | "rejected" => AcpToolCallStatus::Failed,
+        _ => AcpToolCallStatus::InProgress,
+    }
+}
+
+fn map_finclaw_tool_kind(kind: Option<&str>, title: Option<&str>) -> AcpToolCallKind {
+    let normalized = kind
+        .or(title)
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_else(|| "execute".to_string());
+    if normalized.contains("read") || normalized.contains("search") || normalized.contains("glob") {
+        AcpToolCallKind::Read
+    } else if normalized.contains("edit")
+        || normalized.contains("write")
+        || normalized.contains("patch")
+        || normalized.contains("replace")
+    {
+        AcpToolCallKind::Edit
+    } else {
+        AcpToolCallKind::Execute
+    }
+}
+
+fn map_finclaw_tool_progress(
+    event: FinclawToolProgressEvent,
+    session_id: &str,
+    is_first: bool,
+) -> AcpToolCallEventData {
+    let status = Some(map_finclaw_tool_status(event.status.as_deref()));
+    let title = Some(
+        event
+            .title
+            .clone()
+            .unwrap_or_else(|| event.custom_name.clone()),
+    );
+    let kind = Some(map_finclaw_tool_kind(event.kind.as_deref(), event.title.as_deref()));
+    let content = event.content_text.map(|text| {
+        vec![AcpToolCallContentItem::Content {
+            content: AcpToolCallTextBlock {
+                block_type: AcpToolCallTextBlockType::Text,
+                text,
+            },
+        }]
+    });
+
+    AcpToolCallEventData {
+        session_id: session_id.to_string(),
+        update: AcpToolCallUpdateData {
+            session_update: if is_first {
+                AcpToolCallSessionUpdateKind::ToolCall
+            } else {
+                AcpToolCallSessionUpdateKind::ToolCallUpdate
+            },
+            tool_call_id: event.tool_call_id,
+            status,
+            title,
+            kind,
+            raw_input: event.raw_input,
+            raw_output: event.raw_output,
+            content,
+            locations: None,
+        },
+        meta: None,
+    }
+}
+
 #[async_trait::async_trait]
 impl IAgentTask for FinclawAgentManager {
     fn agent_type(&self) -> AgentType {
@@ -350,6 +424,7 @@ impl IAgentTask for FinclawAgentManager {
         .await
         .map_err(|e| AgentSendError::from_agent_error(AgentError::bad_gateway(e)))?;
         pin_mut!(stream);
+        let mut seen_tool_calls: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         let send_result = tokio::select! {
             result = async {
@@ -358,6 +433,47 @@ impl IAgentTask for FinclawAgentManager {
                     match event {
                         FinclawInferEvent::TextChunk(delta) => {
                             self.runtime.emit(AgentStreamEvent::Text(TextEventData { content: delta }));
+                        }
+                        FinclawInferEvent::ThinkingChunk(delta) => {
+                            self.runtime.emit(AgentStreamEvent::Thinking(ThinkingEventData {
+                                content: delta,
+                                subject: None,
+                                duration: None,
+                                status: Some("thinking".into()),
+                            }));
+                        }
+                        FinclawInferEvent::ToolProgress(tool_progress) => {
+                            let tool_call_id = tool_progress.tool_call_id.clone();
+                            let custom_name = tool_progress.custom_name.clone();
+                            let title = tool_progress.title.clone().unwrap_or_default();
+                            let status = tool_progress.status.clone().unwrap_or_default();
+                            let kind = tool_progress.kind.clone().unwrap_or_default();
+                            let has_raw_input = tool_progress.raw_input.is_some();
+                            let has_raw_output = tool_progress.raw_output.is_some();
+                            let has_content_text = tool_progress.content_text.is_some();
+                            let is_first = seen_tool_calls.insert(tool_call_id.clone());
+                            let is_fallback_call_id = tool_call_id.starts_with("finclaw:");
+
+                            info!(
+                                conversation_id = %self.conversation_id(),
+                                tool_event = %custom_name,
+                                tool_call_id = %tool_call_id,
+                                is_first,
+                                is_fallback_call_id,
+                                status = %status,
+                                kind = %kind,
+                                title = %title,
+                                has_raw_input,
+                                has_raw_output,
+                                has_content_text,
+                                "FinClaw tool event mapped to AcpToolCall"
+                            );
+
+                            self.runtime.emit(AgentStreamEvent::AcpToolCall(map_finclaw_tool_progress(
+                                tool_progress,
+                                self.conversation_id(),
+                                is_first,
+                            )));
                         }
                         FinclawInferEvent::ApprovalRequired(approval) => {
                             self.handle_approval_required(approval).await?;
@@ -378,6 +494,9 @@ impl IAgentTask for FinclawAgentManager {
             _ = self.cancel_notify.notified() => {
                 info!(conversation_id = %self.conversation_id(), "FinClaw infer cancelled");
                 self.pending_approvals.lock().await.clear();
+                // Ensure stream relay receives a terminal event on stop so
+                // runtime_state releases active_turn_id immediately.
+                self.runtime.emit_finish(None);
                 Ok(())
             }
         };
@@ -389,7 +508,8 @@ impl IAgentTask for FinclawAgentManager {
     async fn cancel(&self) -> Result<(), AgentError> {
         self.cancel_notify.notify_waiters();
         self.pending_approvals.lock().await.clear();
-        self.runtime.transition_to(ConversationStatus::Finished);
+        // Idempotent: if send_message already emitted Finish, this is a no-op.
+        self.runtime.emit_finish(None);
         Ok(())
     }
 

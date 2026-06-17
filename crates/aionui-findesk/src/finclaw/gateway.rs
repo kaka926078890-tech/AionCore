@@ -11,7 +11,9 @@ use tracing::{info, warn};
 use crate::config::FindeskConfig;
 use crate::finclaw::binary::resolve_finclaw_binary;
 use crate::finclaw::port_json::{probe_claw_health, probe_claw_real_llm_ready, read_claw_port, stop_profile_daemon};
-use crate::finclaw::serve_config::prepare_workspace_skills_serve_config;
+use crate::finclaw::serve_config::{
+    prepare_finclaw_workspace_skills_config, workspace_has_linked_skills,
+};
 use crate::finsafe::finsafe_enabled;
 
 #[derive(Debug, Clone)]
@@ -44,7 +46,22 @@ impl FinclawGateway {
     }
 
     pub async fn ensure_started(&self) -> Result<u16, String> {
-        if let Some(port) = *self.claw_port.lock().await {
+        let needs_skills_overlay = workspace_has_linked_skills(&self.config.serve_cwd);
+
+        // Sync profile config + overlay before any reuse decision.
+        let _ = prepare_finclaw_workspace_skills_config(&self.config.serve_cwd, &self.config.profile);
+
+        // Workspace-linked auto-inject skills live under `{workspace}/.finclaw/skills`
+        // and are wired into the profile via `skills.external_dirs`. Recycle any
+        // existing serve process so embedded supervisor rescans with the updated
+        // profile config (overlay alone is not always honored on reuse paths).
+        if needs_skills_overlay {
+            if let Some(mut child) = self.child.lock().await.take() {
+                let _ = child.start_kill();
+            }
+            *self.claw_port.lock().await = None;
+            stop_profile_daemon(&self.config.profile).await;
+        } else if let Some(port) = *self.claw_port.lock().await {
             if probe_claw_health(port).await && probe_claw_real_llm_ready(port).await {
                 return Ok(port);
             }
@@ -55,7 +72,9 @@ impl FinclawGateway {
             }
         }
 
-        if let Some(port) = read_claw_port(&self.config.profile) {
+        if !needs_skills_overlay
+            && let Some(port) = read_claw_port(&self.config.profile)
+        {
             if probe_claw_health(port).await && probe_claw_real_llm_ready(port).await {
                 info!(
                     profile = %self.config.profile,
@@ -98,7 +117,7 @@ impl FinclawGateway {
         for arg in &args {
             builder.arg(arg);
         }
-        if let Some(config_path) = prepare_workspace_skills_serve_config(&self.config.serve_cwd) {
+        if let Some(config_path) = prepare_finclaw_workspace_skills_config(&self.config.serve_cwd, &self.config.profile) {
             builder.arg("--config");
             builder.arg(config_path);
         }

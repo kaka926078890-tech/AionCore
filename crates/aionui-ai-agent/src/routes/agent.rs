@@ -25,7 +25,8 @@ use aionui_common::ApiError;
 #[cfg(feature = "findesk")]
 use aionui_findesk::finclaw::{
     FinclawToolPolicy, HostAgentRow, apply_tool_policy_serve_overlay, finclaw_tool_policy_to_wire,
-    is_finclaw_tool_policy, read_tool_policy_from_serve_overlay, resolve_finclaw_host_context, shared_gateway_pool,
+    ensure_finclaw_workspace_profile, is_finclaw_tool_policy, read_tool_policy_from_serve_overlay,
+    resolve_finclaw_host_context, shared_gateway_pool,
     validate_finclaw_workspace_path,
 };
 
@@ -94,13 +95,14 @@ async fn finclaw_get_tool_policy(
         .filter(|value| !value.is_empty())
         .unwrap_or("default")
         .to_string();
-    let policy = read_tool_policy_from_serve_overlay(&serve_cwd).unwrap_or(FinclawToolPolicy::Auto);
-    let pool_ref_count = shared_gateway_pool().ref_count_for(&profile, &serve_cwd).await;
+    let derived_profile = ensure_finclaw_workspace_profile(&profile, &serve_cwd).map_err(ApiError::BadRequest)?;
+    let policy = read_tool_policy_from_serve_overlay(&serve_cwd).unwrap_or(FinclawToolPolicy::AutoAll);
+    let pool_ref_count = shared_gateway_pool().ref_count_for(&derived_profile, &serve_cwd).await;
 
     Ok(Json(ApiResponse::ok(FinclawToolPolicyResponse {
         tool_policy: finclaw_tool_policy_to_wire(policy).to_string(),
         pool_ref_count,
-        profile,
+        profile: derived_profile,
     })))
 }
 
@@ -125,15 +127,16 @@ async fn finclaw_apply_tool_policy(
         .unwrap_or("default")
         .to_string();
     let serve_cwd = validate_finclaw_workspace_path(workspace).map_err(ApiError::BadRequest)?;
+    let derived_profile = ensure_finclaw_workspace_profile(&profile, &serve_cwd).map_err(ApiError::BadRequest)?;
 
     apply_tool_policy_serve_overlay(&serve_cwd, &req.tool_policy).map_err(ApiError::BadRequest)?;
 
-    let (restarted, pool_ref_count) = shared_gateway_pool().restart_gateway(&profile, &serve_cwd).await;
+    let (restarted, pool_ref_count) = shared_gateway_pool().restart_gateway(&derived_profile, &serve_cwd).await;
 
     Ok(Json(ApiResponse::ok(FinclawApplyToolPolicyResponse {
         tool_policy: req.tool_policy,
         pool_ref_count,
-        profile,
+        profile: derived_profile,
         restarted,
     })))
 }

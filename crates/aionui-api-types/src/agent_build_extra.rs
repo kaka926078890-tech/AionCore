@@ -111,23 +111,23 @@ fn default_aionrs_max_tokens() -> u32 {
 pub struct FinclawBuildExtra {
     #[serde(default)]
     pub workspace: Option<String>,
-    #[serde(default, rename = "customWorkspace")]
+    #[serde(default, rename = "customWorkspace", alias = "custom_workspace")]
     pub custom_workspace: Option<bool>,
     #[serde(default)]
     pub backend: Option<String>,
-    #[serde(default, rename = "agentName")]
+    #[serde(default, rename = "agentName", alias = "agent_name")]
     pub agent_name: Option<String>,
-    #[serde(default, rename = "cliPath")]
+    #[serde(default, rename = "cliPath", alias = "cli_path")]
     pub cli_path: Option<String>,
-    #[serde(default, rename = "finclawProfile")]
+    #[serde(default, rename = "finclawProfile", alias = "finclaw_profile")]
     pub finclaw_profile: Option<String>,
-    #[serde(default, rename = "finclawSecurityMode")]
+    #[serde(default, rename = "finclawSecurityMode", alias = "finclaw_security_mode")]
     pub finclaw_security_mode: Option<String>,
-    #[serde(default, rename = "finclawToolPolicy")]
+    #[serde(default, rename = "finclawToolPolicy", alias = "finclaw_tool_policy")]
     pub finclaw_tool_policy: Option<String>,
-    #[serde(default, rename = "sessionMode")]
+    #[serde(default, rename = "sessionMode", alias = "session_mode")]
     pub session_mode: Option<String>,
-    #[serde(default, rename = "maxTokens")]
+    #[serde(default, rename = "maxTokens", alias = "max_tokens")]
     pub max_tokens: Option<u32>,
     #[serde(default)]
     pub user_id: Option<String>,
@@ -160,4 +160,28 @@ pub struct SlashCommandItem {
     pub empty_turn_tip_code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub empty_turn_tip_params: Option<serde_json::Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FinclawBuildExtra;
+    use serde_json::json;
+
+    #[test]
+    fn finclaw_build_extra_accepts_camel_case_policy_key() {
+        let parsed: FinclawBuildExtra = serde_json::from_value(json!({
+            "finclawToolPolicy": "readonly"
+        }))
+        .expect("deserialize finclaw build extra");
+        assert_eq!(parsed.finclaw_tool_policy.as_deref(), Some("readonly"));
+    }
+
+    #[test]
+    fn finclaw_build_extra_accepts_snake_case_policy_key() {
+        let parsed: FinclawBuildExtra = serde_json::from_value(json!({
+            "finclaw_tool_policy": "readonly"
+        }))
+        .expect("deserialize finclaw build extra");
+        assert_eq!(parsed.finclaw_tool_policy.as_deref(), Some("readonly"));
+    }
 }
