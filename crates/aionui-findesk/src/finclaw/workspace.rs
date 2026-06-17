@@ -52,6 +52,7 @@ pub fn ensure_finclaw_workspace_profile(base_profile: &str, serve_cwd: &Path) ->
     let derived_dir = resolve_finclaw_profile_dir(&derived_profile);
     let profile_yaml = derived_dir.join("profile.yaml");
     if profile_yaml.is_file() {
+        rewrite_profile_yaml_name(&profile_yaml, &derived_profile)?;
         return Ok(derived_profile);
     }
 
@@ -61,7 +62,39 @@ pub fn ensure_finclaw_workspace_profile(base_profile: &str, serve_cwd: &Path) ->
     }
 
     copy_dir_recursive(&base_dir, &derived_dir)?;
+    rewrite_profile_yaml_name(&profile_yaml, &derived_profile)?;
     Ok(derived_profile)
+}
+
+fn rewrite_profile_yaml_name(profile_yaml: &Path, profile_name: &str) -> Result<(), String> {
+    let body = fs::read_to_string(profile_yaml).map_err(|e| e.to_string())?;
+    let had_trailing_newline = body.ends_with('\n');
+    let mut replaced = false;
+    let mut lines = Vec::new();
+
+    for line in body.lines() {
+        if !replaced && line.starts_with("name:") {
+            lines.push(format!("name: {profile_name}"));
+            replaced = true;
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+
+    if !replaced {
+        let insert_at = lines
+            .iter()
+            .position(|line| line.starts_with("schema_version:"))
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        lines.insert(insert_at, format!("name: {profile_name}"));
+    }
+
+    let mut out = lines.join("\n");
+    if had_trailing_newline || !out.is_empty() {
+        out.push('\n');
+    }
+    fs::write(profile_yaml, out).map_err(|e| e.to_string())
 }
 
 fn copy_dir_recursive(from: &Path, to: &Path) -> Result<(), String> {
@@ -107,5 +140,31 @@ mod tests {
         // ensure_finclaw_workspace_profile reads ~/.finclaw — skip integration here.
         let derived = derive_finclaw_workspace_profile("default", &serve);
         assert_ne!(derived, "default");
+    }
+
+    #[test]
+    fn rewrite_profile_yaml_name_replaces_cloned_base_name() {
+        let dir = tempdir().unwrap();
+        let profile_yaml = dir.path().join("profile.yaml");
+        fs::write(&profile_yaml, "schema_version: 1\nname: default\ndescription: test\n").unwrap();
+
+        rewrite_profile_yaml_name(&profile_yaml, "findesk-ws-default-abc123").unwrap();
+
+        let body = fs::read_to_string(profile_yaml).unwrap();
+        assert!(body.contains("name: findesk-ws-default-abc123\n"));
+        assert!(!body.contains("name: default\n"));
+        assert!(body.contains("description: test\n"));
+    }
+
+    #[test]
+    fn rewrite_profile_yaml_name_inserts_missing_name_after_schema_version() {
+        let dir = tempdir().unwrap();
+        let profile_yaml = dir.path().join("profile.yaml");
+        fs::write(&profile_yaml, "schema_version: 1\ndescription: test\n").unwrap();
+
+        rewrite_profile_yaml_name(&profile_yaml, "findesk-ws-default-abc123").unwrap();
+
+        let body = fs::read_to_string(profile_yaml).unwrap();
+        assert!(body.starts_with("schema_version: 1\nname: findesk-ws-default-abc123\n"));
     }
 }

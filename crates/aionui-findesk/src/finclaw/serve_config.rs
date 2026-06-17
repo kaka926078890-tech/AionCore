@@ -116,9 +116,9 @@ pub fn sync_workspace_skills_external_dirs_to_profile_config(workspace: &Path, p
 ///
 /// Some bundled FinClaw builds only enumerate `<profile>/skills` for
 /// `list_skills`, even when `skills.external_dirs` is present. Keep the
-/// external-dir overlay for newer builds, and add non-destructive symlinks for
-/// older builds. Existing profile skills win so user-installed skills are not
-/// overwritten.
+/// external-dir overlay for newer builds, and copy workspace skills into the
+/// profile for older builds. Existing real profile skills win so user-installed
+/// skills are not overwritten.
 fn mirror_workspace_skills_into_profile_dir(profile_dir: &Path, workspace: &Path) -> usize {
     let workspace_skills_dir = workspace_linked_skills_dir(workspace);
     if !workspace_skills_dir.is_dir() {
@@ -137,15 +137,12 @@ fn mirror_workspace_skills_into_profile_dir(profile_dir: &Path, workspace: &Path
 
     let mut linked = 0;
     for entry in entries.flatten() {
-        let source = entry.path();
+        let source = entry.path().canonicalize().unwrap_or_else(|_| entry.path());
         if !source.join("SKILL.md").is_file() {
             continue;
         }
 
         let target = profile_skills_dir.join(entry.file_name());
-        if target.exists() {
-            continue;
-        }
         if let Ok(meta) = std::fs::symlink_metadata(&target) {
             if meta.file_type().is_symlink() {
                 let _ = std::fs::remove_file(&target);
@@ -154,21 +151,27 @@ fn mirror_workspace_skills_into_profile_dir(profile_dir: &Path, workspace: &Path
             }
         }
 
-        if symlink_skill_dir(&source, &target).is_ok() {
+        if copy_skill_dir_recursive(&source, &target).is_ok() {
             linked += 1;
         }
     }
     linked
 }
 
-#[cfg(unix)]
-fn symlink_skill_dir(source: &Path, target: &Path) -> std::io::Result<()> {
-    std::os::unix::fs::symlink(source, target)
-}
-
-#[cfg(windows)]
-fn symlink_skill_dir(source: &Path, target: &Path) -> std::io::Result<()> {
-    std::os::windows::fs::symlink_dir(source, target)
+fn copy_skill_dir_recursive(source: &Path, target: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_skill_dir_recursive(&source_path, &target_path)?;
+        } else if file_type.is_file() {
+            std::fs::copy(source_path, target_path)?;
+        }
+    }
+    Ok(())
 }
 
 /// Refresh workspace overlay and profile config before starting `finclaw serve`.
@@ -438,6 +441,7 @@ mod tests {
         let target = profile_dir.join("skills").join("cron");
         assert!(target.exists());
         assert!(target.join("SKILL.md").is_file());
+        assert!(!std::fs::symlink_metadata(target).unwrap().file_type().is_symlink());
     }
 
     #[test]
@@ -457,6 +461,29 @@ mod tests {
         assert_eq!(linked, 0);
         let body = std::fs::read_to_string(profile_skill.join("SKILL.md")).unwrap();
         assert!(body.contains("custom-cron"));
+    }
+
+    #[test]
+    fn mirror_replaces_existing_profile_symlink_with_real_dir() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("workspace");
+        let source = workspace.join(".finclaw").join("skills").join("cron");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "---\nname: cron\n---\n").unwrap();
+
+        let profile_dir = tmp.path().join("profile");
+        let target = profile_dir.join("skills").join("cron");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&source, &target).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&source, &target).unwrap();
+
+        let linked = mirror_workspace_skills_into_profile_dir(&profile_dir, &workspace);
+
+        assert_eq!(linked, 1);
+        assert!(target.join("SKILL.md").is_file());
+        assert!(!std::fs::symlink_metadata(target).unwrap().file_type().is_symlink());
     }
 
     #[test]
