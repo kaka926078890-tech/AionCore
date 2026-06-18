@@ -86,6 +86,18 @@ impl FinclawGatewayPool {
             .unwrap_or(0)
     }
 
+    /// Sum ref counts for all pooled gateways under the same workspace cwd.
+    pub async fn ref_count_for_workspace(&self, workspace_profile: &str, serve_cwd: &Path) -> usize {
+        let cwd = serve_cwd.canonicalize().unwrap_or_else(|_| serve_cwd.to_path_buf());
+        self.entries
+            .lock()
+            .await
+            .iter()
+            .filter(|(key, _)| key.cwd == cwd && profile_matches_workspace(&key.profile, workspace_profile))
+            .map(|(_, entry)| entry.ref_count)
+            .sum()
+    }
+
     pub async fn total_ref_count(&self) -> usize {
         self.entries.lock().await.values().map(|entry| entry.ref_count).sum()
     }
@@ -104,6 +116,38 @@ impl FinclawGatewayPool {
         gateway.shutdown().await;
         (true, ref_count)
     }
+
+    /// Restart every pooled gateway for a workspace (all per-conversation profiles).
+    pub async fn restart_gateways_for_workspace(&self, workspace_profile: &str, serve_cwd: &Path) -> (bool, usize) {
+        let cwd = serve_cwd.canonicalize().unwrap_or_else(|_| serve_cwd.to_path_buf());
+        let mut entries = self.entries.lock().await;
+        let keys: Vec<PoolKey> = entries
+            .keys()
+            .filter(|key| key.cwd == cwd && profile_matches_workspace(&key.profile, workspace_profile))
+            .cloned()
+            .collect();
+        if keys.is_empty() {
+            return (false, 0);
+        }
+
+        let mut ref_count = 0usize;
+        let mut gateways = Vec::new();
+        for key in keys {
+            if let Some(entry) = entries.remove(&key) {
+                ref_count += entry.ref_count;
+                gateways.push(entry.gateway);
+            }
+        }
+        drop(entries);
+        for gateway in gateways {
+            gateway.shutdown().await;
+        }
+        (true, ref_count)
+    }
+}
+
+fn profile_matches_workspace(profile: &str, workspace_profile: &str) -> bool {
+    profile == workspace_profile || profile.starts_with(&format!("{workspace_profile}-sess-"))
 }
 
 static SHARED_POOL: OnceLock<FinclawGatewayPool> = OnceLock::new();
@@ -202,5 +246,59 @@ mod tests {
         assert_eq!(pool.ref_count_for("default", dir_a.path()).await, 1);
         assert_eq!(pool.ref_count_for("default", dir_b.path()).await, 1);
         assert_eq!(pool.total_ref_count().await, 2);
+    }
+
+    #[tokio::test]
+    async fn different_profiles_same_cwd_get_separate_entries() {
+        let pool = FinclawGatewayPool::new(FindeskConfig::from_env());
+        let dir = tempdir().unwrap();
+        let base = FinclawGatewayConfig {
+            cli_path: None,
+            profile: "findesk-ws-default-abc".into(),
+            security_mode: None,
+            serve_cwd: dir.path().to_path_buf(),
+            llm_serve_env: HashMap::new(),
+            model_fingerprint: None,
+        };
+        let conv_a = FinclawGatewayConfig {
+            profile: "findesk-ws-default-abc-sess-conv-a".into(),
+            ..base.clone()
+        };
+        let conv_b = FinclawGatewayConfig {
+            profile: "findesk-ws-default-abc-sess-conv-b".into(),
+            ..base
+        };
+
+        pool.acquire(conv_a).await;
+        pool.acquire(conv_b).await;
+
+        assert_eq!(
+            pool.ref_count_for("findesk-ws-default-abc-sess-conv-a", dir.path()).await,
+            1
+        );
+        assert_eq!(
+            pool.ref_count_for("findesk-ws-default-abc-sess-conv-b", dir.path()).await,
+            1
+        );
+        assert_eq!(pool.total_ref_count().await, 2);
+    }
+
+    #[tokio::test]
+    async fn ref_count_for_workspace_sums_conversation_profiles() {
+        let pool = FinclawGatewayPool::new(FindeskConfig::from_env());
+        let dir = tempdir().unwrap();
+        let workspace_profile = "findesk-ws-default-abc123";
+        let conv_profile = format!("{workspace_profile}-sess-conv1");
+        pool.acquire(FinclawGatewayConfig {
+            cli_path: None,
+            profile: conv_profile,
+            security_mode: None,
+            serve_cwd: dir.path().to_path_buf(),
+            llm_serve_env: HashMap::new(),
+            model_fingerprint: None,
+        })
+        .await;
+
+        assert_eq!(pool.ref_count_for_workspace(workspace_profile, dir.path()).await, 1);
     }
 }

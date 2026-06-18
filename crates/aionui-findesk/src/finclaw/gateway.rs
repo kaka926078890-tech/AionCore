@@ -164,6 +164,9 @@ impl FinclawGateway {
         {
             warn!(?error, "finclaw serve kill failed");
         }
+        // Pooled gateways often reuse an existing profile daemon via port.json; killing only
+        // our tracked child is not enough for tool-policy switches to take effect.
+        stop_profile_daemon(&self.config.profile).await;
         *self.claw_port.lock().await = None;
     }
 }

@@ -14,7 +14,8 @@ use aionui_findesk::finclaw::{
     FinclawApprovalRequired, FinclawGatewayConfig, FinclawInferEvent, FinclawToolProgressEvent,
     apply_tool_policy_from_extra,
     build_finclaw_llm_config_slice, build_finclaw_model_fingerprint, decision_from_confirm_data,
-    ensure_finclaw_workspace_profile, post_infer_stream, prepare_finclaw_llm_for_profiles,
+    ensure_finclaw_conversation_profile, ensure_finclaw_workspace_profile, post_infer_stream,
+    prepare_finclaw_llm_for_profiles,
     resolve_finclaw_infer_capability, resolve_finclaw_serve_cwd, shared_gateway_pool, submit_approval_resolve,
 };
 use futures_util::{StreamExt, pin_mut};
@@ -69,6 +70,8 @@ impl FinclawAgentManager {
         let serve_cwd = resolve_finclaw_serve_cwd(&workspace);
         let derived_profile =
             ensure_finclaw_workspace_profile(base_profile, &serve_cwd).map_err(AgentError::bad_request)?;
+        let serve_profile = ensure_finclaw_conversation_profile(&derived_profile, &conversation_id)
+            .map_err(AgentError::bad_request)?;
 
         apply_tool_policy_from_extra(&serve_cwd, config.finclaw_tool_policy.as_deref())
             .map_err(AgentError::bad_request)?;
@@ -106,7 +109,7 @@ impl FinclawAgentManager {
             &findesk,
             config.cli_path.as_deref(),
             base_profile,
-            &derived_profile,
+            &serve_profile,
             &llm_slice,
         )
         .await
@@ -114,7 +117,7 @@ impl FinclawAgentManager {
 
         let gateway_config = FinclawGatewayConfig {
             cli_path: config.cli_path.clone(),
-            profile: derived_profile.clone(),
+            profile: serve_profile.clone(),
             security_mode: config.finclaw_security_mode.clone(),
             serve_cwd: serve_cwd.clone(),
             llm_serve_env,
@@ -127,7 +130,7 @@ impl FinclawAgentManager {
 
         Ok(Self {
             runtime: AgentRuntime::new(conversation_id, workspace, 128),
-            gateway_profile: derived_profile,
+            gateway_profile: serve_profile,
             gateway_cwd: serve_cwd,
             gateway,
             config,

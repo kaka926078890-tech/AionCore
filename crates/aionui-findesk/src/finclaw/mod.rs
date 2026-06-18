@@ -38,5 +38,8 @@ pub use port_json::{
     probe_claw_health, probe_claw_real_llm_ready, read_claw_port, read_port_json, resolve_port_json_path,
     stop_profile_daemon,
 };
-pub use workspace::{derive_finclaw_workspace_profile, ensure_finclaw_workspace_profile, resolve_finclaw_serve_cwd};
+pub use workspace::{
+    derive_finclaw_conversation_profile, derive_finclaw_workspace_profile, ensure_finclaw_conversation_profile,
+    ensure_finclaw_workspace_profile, resolve_finclaw_serve_cwd,
+};
 pub use workspace_validate::{is_path_within_root, validate_finclaw_workspace_path};

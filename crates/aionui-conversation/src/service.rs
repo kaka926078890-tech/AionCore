@@ -133,6 +133,7 @@ pub struct ConversationService {
     cron_service: Arc<RwLock<Option<Arc<dyn ICronService>>>>,
     mcp_server_repo: Arc<RwLock<Option<Arc<dyn IMcpServerRepository>>>>,
     runtime_state: Arc<ConversationRuntimeStateService>,
+    file_service: Arc<std::sync::RwLock<Option<Arc<dyn aionui_file::traits::IFileService>>>>,
 
     // Repos for conversation, acp_session and agent_metadata access.
     conversation_repo: Arc<dyn IConversationRepository>,
@@ -162,6 +163,7 @@ impl ConversationService {
             cron_service: Arc::new(RwLock::new(None)),
             mcp_server_repo: Arc::new(RwLock::new(None)),
             runtime_state: Arc::new(ConversationRuntimeStateService::default()),
+            file_service: Arc::new(std::sync::RwLock::new(None)),
 
             conversation_repo,
             agent_metadata_repo,
@@ -184,6 +186,16 @@ impl ConversationService {
         if let Ok(mut guard) = self.mcp_server_repo.write() {
             *guard = Some(repo);
         }
+    }
+
+    pub fn with_file_service(&self, file_service: Arc<dyn aionui_file::traits::IFileService>) {
+        if let Ok(mut guard) = self.file_service.write() {
+            *guard = Some(file_service);
+        }
+    }
+
+    pub(crate) fn file_service(&self) -> Option<Arc<dyn aionui_file::traits::IFileService>> {
+        self.file_service.read().ok().and_then(|guard| guard.clone())
     }
 
     /// Register a hook to be notified when a conversation is deleted.

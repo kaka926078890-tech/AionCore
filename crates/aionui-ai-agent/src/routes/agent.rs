@@ -97,7 +97,17 @@ async fn finclaw_get_tool_policy(
         .to_string();
     let derived_profile = ensure_finclaw_workspace_profile(&profile, &serve_cwd).map_err(ApiError::BadRequest)?;
     let policy = read_tool_policy_from_serve_overlay(&serve_cwd).unwrap_or(FinclawToolPolicy::AutoAll);
-    let pool_ref_count = shared_gateway_pool().ref_count_for(&derived_profile, &serve_cwd).await;
+    let mut pool_ref_count = shared_gateway_pool()
+        .ref_count_for_workspace(&derived_profile, &serve_cwd)
+        .await;
+    if pool_ref_count == 0
+        && query
+            .conversation_id
+            .as_deref()
+            .is_some_and(|id| !id.trim().is_empty())
+    {
+        pool_ref_count = 1;
+    }
 
     Ok(Json(ApiResponse::ok(FinclawToolPolicyResponse {
         tool_policy: finclaw_tool_policy_to_wire(policy).to_string(),
@@ -131,7 +141,9 @@ async fn finclaw_apply_tool_policy(
 
     apply_tool_policy_serve_overlay(&serve_cwd, &req.tool_policy).map_err(ApiError::BadRequest)?;
 
-    let (restarted, pool_ref_count) = shared_gateway_pool().restart_gateway(&derived_profile, &serve_cwd).await;
+    let (restarted, pool_ref_count) = shared_gateway_pool()
+        .restart_gateways_for_workspace(&derived_profile, &serve_cwd)
+        .await;
 
     Ok(Json(ApiResponse::ok(FinclawApplyToolPolicyResponse {
         tool_policy: req.tool_policy,

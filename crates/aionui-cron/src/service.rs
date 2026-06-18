@@ -36,6 +36,19 @@ const PLACEHOLDER_PATTERNS: &[&str] = &[
     "put your",
 ];
 const DEPRECATED_AGENT_TYPE_MESSAGE: &str = "This agent type is no longer supported for new conversations.";
+const CHATKIT_CRON_ID_KEY: &str = "chatkit_cron_id";
+
+fn is_chatkit_mirror_job(job: &CronJob) -> bool {
+    job.agent_config
+        .as_ref()
+        .and_then(|config| config.config_options.as_ref())
+        .and_then(|options| options.get(CHATKIT_CRON_ID_KEY))
+        .is_some_and(|value| !value.is_empty())
+}
+
+fn should_schedule_job(job: &CronJob) -> bool {
+    job.enabled && !is_chatkit_mirror_job(job)
+}
 
 #[derive(Clone)]
 pub struct CronService {
@@ -123,7 +136,9 @@ impl CronService {
         let row = cron_job_to_row(&job)?;
         self.repo.insert(&row).await?;
         self.bind_existing_conversation_if_needed(&job).await;
-        self.scheduler.schedule_job(&job);
+        if should_schedule_job(&job) {
+            self.scheduler.schedule_job(&job);
+        }
         self.emitter.emit_job_created(&cron_job_to_response(&job));
 
         info!(job_id = %job.id, name = %job.name, "Cron job created");
@@ -192,7 +207,11 @@ impl CronService {
         self.repo.update(job_id, &params).await?;
 
         self.bind_existing_conversation_if_needed(&job).await;
-        self.scheduler.reschedule_job(&job);
+        if should_schedule_job(&job) {
+            self.scheduler.reschedule_job(&job);
+        } else {
+            self.scheduler.cancel_job(job_id);
+        }
         self.emitter.emit_job_updated(&cron_job_to_response(&job));
 
         info!(job_id = %job.id, "Cron job updated");
@@ -269,6 +288,10 @@ impl CronService {
                 continue;
             }
 
+            if !should_schedule_job(&job) {
+                continue;
+            }
+
             self.scheduler.schedule_job(&job);
             scheduled += 1;
         }
@@ -300,6 +323,11 @@ impl CronService {
 
         if !job.enabled {
             info!(job_id, "Tick: job disabled, skipping");
+            return;
+        }
+
+        if is_chatkit_mirror_job(&job) {
+            info!(job_id, "Tick: chatkit mirror job, skipping execution");
             return;
         }
 
@@ -339,6 +367,10 @@ impl CronService {
                 self.insert_missed_job_tips(&job).await;
                 self.reschedule_after_missed(&job).await;
                 self.emitter.emit_job_executed(&job.id, "missed", None);
+                continue;
+            }
+
+            if is_chatkit_mirror_job(&job) {
                 continue;
             }
 
@@ -650,24 +682,11 @@ impl CronService {
     async fn reschedule_after_execution(&self, job: &CronJob) {
         let is_at = matches!(job.schedule, CronSchedule::At { .. });
         if is_at {
-            let params = UpdateCronJobParams {
-                enabled: Some(false),
-                next_run_at: Some(None),
-                ..Default::default()
-            };
-            if let Err(e) = self.repo.update(&job.id, &params).await {
-                error!(job_id = %job.id, error = %e, "Failed to disable at-type job");
+            if let Err(e) = self.remove_job(&job.id).await {
+                error!(job_id = %job.id, error = %e, "Failed to remove at-type job after execution");
+            } else {
+                info!(job_id = %job.id, "At-type job executed, auto-removed");
             }
-            self.scheduler.cancel_job(&job.id);
-
-            let disabled = CronJob {
-                enabled: false,
-                next_run_at: None,
-                ..job.clone()
-            };
-            self.emitter.emit_job_updated(&cron_job_to_response(&disabled));
-
-            info!(job_id = %job.id, "At-type job executed, auto-disabled");
             return;
         }
 
@@ -735,19 +754,13 @@ impl CronService {
     async fn reschedule_after_missed(&self, job: &CronJob) {
         let is_at = matches!(job.schedule, CronSchedule::At { .. });
         if is_at {
-            let params = UpdateCronJobParams {
-                enabled: Some(false),
-                next_run_at: Some(None),
-                ..Default::default()
-            };
-            if let Err(err) = self.repo.update(&job.id, &params).await {
+            if let Err(err) = self.remove_job(&job.id).await {
                 error!(
                     job_id = %job.id,
                     error = %err,
-                    "Failed to disable missed at-type job"
+                    "Failed to remove missed at-type job"
                 );
             }
-            self.scheduler.cancel_job(&job.id);
             return;
         }
 

@@ -2,12 +2,13 @@ use std::sync::Arc;
 
 use aionui_ai_agent::types::{BuildTaskOptions, SendMessageData};
 use aionui_ai_agent::{AgentSendError, IWorkerTaskManager};
-use aionui_common::{ConversationStatus, ErrorChain, now_ms};
+use aionui_common::{AgentType, ConversationStatus, ErrorChain, now_ms};
 use aionui_db::models::ConversationRow;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
 use crate::agent_health_policy::{AgentHealthAction, AgentHealthPolicy};
+use crate::message_files::stage_message_attachments;
 use crate::runtime_state::TurnClaim;
 use crate::service::{
     ConversationService, MAX_CRON_CONTINUATIONS_PER_TURN, agent_error_top_level_code, persist_session_key,
@@ -107,13 +108,51 @@ impl ConversationTurnOrchestrator {
             "Agent task ready"
         );
 
+        let mut request = input.request;
+        if matches!(agent.agent_type(), AgentType::Finclaw | AgentType::Aionrs)
+            && let Some(file_service) = self.service.file_service()
+        {
+            match stage_message_attachments(
+                file_service.as_ref(),
+                agent.workspace(),
+                &request.content,
+                &request.files,
+            )
+            .await
+            {
+                Ok(staged) => {
+                    request.content = staged.content;
+                    request.files = staged.files;
+                }
+                Err(err) => {
+                    let top_level_code = err.error_code();
+                    let send_error = AgentSendError::from_agent_error(err.to_agent_error());
+                    error!(
+                        conversation_id = %conv_id,
+                        turn_id = %turn_id,
+                        error_code = err.error_code(),
+                        error = %ErrorChain(&err),
+                        "Failed to stage message attachments"
+                    );
+                    self.service
+                        .persist_and_broadcast_send_failure_tip(&conv_id, &turn_id, &send_error, Some(top_level_code))
+                        .await;
+                    let was_deleting = turn_claim.release_for_turn(&turn_id);
+                    self.service
+                        .complete_released_turn(&conv_id, &turn_id, was_deleting)
+                        .await;
+                    return;
+                }
+            }
+        }
+
         let first_turn_msg_id = ConversationService::mint_msg_id();
         let mut pending_send = Some((
             SendMessageData {
-                content: input.request.content,
+                content: request.content,
                 msg_id: first_turn_msg_id.clone(),
-                files: input.request.files,
-                inject_skills: input.request.inject_skills,
+                files: request.files,
+                inject_skills: request.inject_skills,
             },
             first_turn_msg_id,
         ));

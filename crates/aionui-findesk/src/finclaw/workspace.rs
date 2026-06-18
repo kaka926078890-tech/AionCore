@@ -8,9 +8,13 @@ const WORKSPACE_PROFILE_PREFIX: &str = "findesk-ws-";
 pub fn resolve_finclaw_serve_cwd(workspace: &str) -> PathBuf {
     let trimmed = workspace.trim();
     if trimmed.is_empty() {
-        return std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        return std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .canonicalize()
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     }
-    PathBuf::from(trimmed)
+    let path = PathBuf::from(trimmed);
+    path.canonicalize().unwrap_or(path)
 }
 
 pub fn derive_finclaw_workspace_profile(base_profile: &str, serve_cwd: &Path) -> String {
@@ -64,6 +68,42 @@ pub fn ensure_finclaw_workspace_profile(base_profile: &str, serve_cwd: &Path) ->
     copy_dir_recursive(&base_dir, &derived_dir)?;
     rewrite_profile_yaml_name(&profile_yaml, &derived_profile)?;
     Ok(derived_profile)
+}
+
+const CONVERSATION_PROFILE_PREFIX: &str = "sess-";
+
+/// Per-conversation FinClaw profile so each chat tab gets its own `finclaw serve` daemon.
+pub fn derive_finclaw_conversation_profile(workspace_profile: &str, conversation_id: &str) -> String {
+    let safe_id: String = conversation_id
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-')
+        .take(16)
+        .collect();
+    let suffix = if safe_id.is_empty() { "session" } else { safe_id.as_str() };
+    format!("{workspace_profile}-{CONVERSATION_PROFILE_PREFIX}{suffix}")
+}
+
+/// Clone the workspace profile when the per-conversation profile is missing.
+pub fn ensure_finclaw_conversation_profile(
+    workspace_profile: &str,
+    conversation_id: &str,
+) -> Result<String, String> {
+    let conv_profile = derive_finclaw_conversation_profile(workspace_profile, conversation_id);
+    let conv_dir = resolve_finclaw_profile_dir(&conv_profile);
+    let profile_yaml = conv_dir.join("profile.yaml");
+    if profile_yaml.is_file() {
+        rewrite_profile_yaml_name(&profile_yaml, &conv_profile)?;
+        return Ok(conv_profile);
+    }
+
+    let base_dir = resolve_finclaw_profile_dir(workspace_profile);
+    if !base_dir.is_dir() {
+        return Err(format!("FinClaw workspace profile \"{workspace_profile}\" not found"));
+    }
+
+    copy_dir_recursive(&base_dir, &conv_dir)?;
+    rewrite_profile_yaml_name(&profile_yaml, &conv_profile)?;
+    Ok(conv_profile)
 }
 
 fn rewrite_profile_yaml_name(profile_yaml: &Path, profile_name: &str) -> Result<(), String> {
@@ -166,5 +206,18 @@ mod tests {
 
         let body = fs::read_to_string(profile_yaml).unwrap();
         assert!(body.starts_with("schema_version: 1\nname: findesk-ws-default-abc123\n"));
+    }
+
+    #[test]
+    fn derive_conversation_profile_is_stable() {
+        let workspace_profile = "findesk-ws-default-abc123";
+        let a = derive_finclaw_conversation_profile(workspace_profile, "conv-uuid-1");
+        let b = derive_finclaw_conversation_profile(workspace_profile, "conv-uuid-1");
+        assert_eq!(a, b);
+        assert!(a.starts_with("findesk-ws-default-abc123-sess-"));
+        assert_ne!(
+            a,
+            derive_finclaw_conversation_profile(workspace_profile, "conv-uuid-2")
+        );
     }
 }

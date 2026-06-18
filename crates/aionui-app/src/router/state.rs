@@ -232,10 +232,15 @@ pub async fn build_module_states(
         elapsed_ms = boot.elapsed().as_millis(),
         "startup: module states bundle started"
     );
+    let file = build_module_state_phase(&boot, "file", || build_file_state(services))?;
     let states = ModuleStates {
         system: build_module_state_phase(&boot, "system", || build_system_state(services)),
         conversation: build_module_state_phase(&boot, "conversation", || {
-            build_conversation_state(services, Some(cron.cron_service.clone()))
+            build_conversation_state(
+                services,
+                Some(cron.cron_service.clone()),
+                Some(Arc::clone(&file.file_service)),
+            )
         }),
         remote_agent: build_module_state_phase(&boot, "remote_agent", || build_remote_agent_state(services)),
         agent: build_module_state_phase(&boot, "agent", || AgentRouterState {
@@ -243,7 +248,7 @@ pub async fn build_module_states(
             service: agent_service,
         }),
         connection_test: build_module_state_phase(&boot, "connection_test", build_connection_test_state),
-        file: build_module_state_phase(&boot, "file", || build_file_state(services))?,
+        file,
         mcp: build_module_state_phase(&boot, "mcp", || build_mcp_state(services)),
         extension: ext_state,
         hub: hub_state,
@@ -324,6 +329,7 @@ pub fn build_system_state(services: &AppServices) -> SystemRouterState {
 pub fn build_conversation_state(
     services: &AppServices,
     cron_service: Option<Arc<aionui_cron::service::CronService>>,
+    file_service: Option<Arc<dyn aionui_file::traits::IFileService>>,
 ) -> ConversationRouterState {
     let pool = services.database.pool().clone();
     let conversaion_repo = Arc::new(SqliteConversationRepository::new(pool.clone()));
@@ -352,6 +358,9 @@ pub fn build_conversation_state(
     if let Some(cron_service) = cron_service {
         conversation_service.with_delete_hook(cron_service.clone());
         conversation_service.with_cron_service(Some(cron_service));
+    }
+    if let Some(file_service) = file_service {
+        conversation_service.with_file_service(file_service);
     }
     ConversationRouterState {
         service: conversation_service,

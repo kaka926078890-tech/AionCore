@@ -39,6 +39,9 @@ pub struct FinclawGetToolPolicyQuery {
     pub workspace: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    /// When set, the UI is switching policy from an active conversation; count at least this session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
