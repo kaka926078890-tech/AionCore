@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 const WORKSPACE_PROFILE_PREFIX: &str = "findesk-ws-";
+const FINCLAW_PROFILE_NAME_MAX_LEN: usize = 32;
 
 pub fn resolve_finclaw_serve_cwd(workspace: &str) -> PathBuf {
     let trimmed = workspace.trim();
@@ -70,24 +71,29 @@ pub fn ensure_finclaw_workspace_profile(base_profile: &str, serve_cwd: &Path) ->
     Ok(derived_profile)
 }
 
-const CONVERSATION_PROFILE_PREFIX: &str = "sess-";
+const CONVERSATION_PROFILE_PREFIX: &str = "fd-s-";
+const CONVERSATION_PROFILE_HASH_LEN: usize = 12;
 
 /// Per-conversation FinClaw profile so each chat tab gets its own `finclaw serve` daemon.
 pub fn derive_finclaw_conversation_profile(workspace_profile: &str, conversation_id: &str) -> String {
-    let safe_id: String = conversation_id
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-')
-        .take(16)
-        .collect();
-    let suffix = if safe_id.is_empty() { "session" } else { safe_id.as_str() };
-    format!("{workspace_profile}-{CONVERSATION_PROFILE_PREFIX}{suffix}")
+    let profile = format!(
+        "{}-{}",
+        derive_finclaw_conversation_profile_prefix(workspace_profile),
+        hash_prefix(conversation_id.as_bytes(), CONVERSATION_PROFILE_HASH_LEN)
+    );
+    debug_assert!(profile.len() <= FINCLAW_PROFILE_NAME_MAX_LEN);
+    profile
+}
+
+pub fn derive_finclaw_conversation_profile_prefix(workspace_profile: &str) -> String {
+    format!(
+        "{CONVERSATION_PROFILE_PREFIX}{}",
+        hash_prefix(workspace_profile.as_bytes(), CONVERSATION_PROFILE_HASH_LEN)
+    )
 }
 
 /// Clone the workspace profile when the per-conversation profile is missing.
-pub fn ensure_finclaw_conversation_profile(
-    workspace_profile: &str,
-    conversation_id: &str,
-) -> Result<String, String> {
+pub fn ensure_finclaw_conversation_profile(workspace_profile: &str, conversation_id: &str) -> Result<String, String> {
     let conv_profile = derive_finclaw_conversation_profile(workspace_profile, conversation_id);
     let conv_dir = resolve_finclaw_profile_dir(&conv_profile);
     let profile_yaml = conv_dir.join("profile.yaml");
@@ -152,6 +158,13 @@ fn copy_dir_recursive(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn hash_prefix(input: &[u8], len: usize) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(input);
+    let hash = format!("{:x}", hasher.finalize());
+    hash[..len.min(hash.len())].to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,10 +227,19 @@ mod tests {
         let a = derive_finclaw_conversation_profile(workspace_profile, "conv-uuid-1");
         let b = derive_finclaw_conversation_profile(workspace_profile, "conv-uuid-1");
         assert_eq!(a, b);
-        assert!(a.starts_with("findesk-ws-default-abc123-sess-"));
-        assert_ne!(
-            a,
-            derive_finclaw_conversation_profile(workspace_profile, "conv-uuid-2")
-        );
+        assert!(a.starts_with(&format!(
+            "{}-",
+            derive_finclaw_conversation_profile_prefix(workspace_profile)
+        )));
+        assert!(a.len() <= FINCLAW_PROFILE_NAME_MAX_LEN);
+        assert_ne!(a, derive_finclaw_conversation_profile(workspace_profile, "conv-uuid-2"));
+    }
+
+    #[test]
+    fn derive_conversation_profile_stays_within_finclaw_name_limit() {
+        let workspace_profile = "findesk-ws-default-ed681feb0367";
+        let profile = derive_finclaw_conversation_profile(workspace_profile, "5a92a56c");
+        assert_eq!(profile.len(), 30);
+        assert!(profile.len() <= FINCLAW_PROFILE_NAME_MAX_LEN);
     }
 }

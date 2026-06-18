@@ -5,6 +5,7 @@ use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 
 use crate::config::FindeskConfig;
+use crate::finclaw::derive_finclaw_conversation_profile_prefix;
 use crate::finclaw::gateway::{FinclawGateway, FinclawGatewayConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -147,7 +148,11 @@ impl FinclawGatewayPool {
 }
 
 fn profile_matches_workspace(profile: &str, workspace_profile: &str) -> bool {
-    profile == workspace_profile || profile.starts_with(&format!("{workspace_profile}-sess-"))
+    profile == workspace_profile
+        || profile.starts_with(&format!(
+            "{}-",
+            derive_finclaw_conversation_profile_prefix(workspace_profile)
+        ))
 }
 
 static SHARED_POOL: OnceLock<FinclawGatewayPool> = OnceLock::new();
@@ -252,34 +257,32 @@ mod tests {
     async fn different_profiles_same_cwd_get_separate_entries() {
         let pool = FinclawGatewayPool::new(FindeskConfig::from_env());
         let dir = tempdir().unwrap();
+        let workspace_profile = "findesk-ws-default-abc";
         let base = FinclawGatewayConfig {
             cli_path: None,
-            profile: "findesk-ws-default-abc".into(),
+            profile: workspace_profile.into(),
             security_mode: None,
             serve_cwd: dir.path().to_path_buf(),
             llm_serve_env: HashMap::new(),
             model_fingerprint: None,
         };
+        let conv_prefix = derive_finclaw_conversation_profile_prefix(workspace_profile);
+        let conv_a_profile = format!("{conv_prefix}-conv-a");
+        let conv_b_profile = format!("{conv_prefix}-conv-b");
         let conv_a = FinclawGatewayConfig {
-            profile: "findesk-ws-default-abc-sess-conv-a".into(),
+            profile: conv_a_profile.clone(),
             ..base.clone()
         };
         let conv_b = FinclawGatewayConfig {
-            profile: "findesk-ws-default-abc-sess-conv-b".into(),
+            profile: conv_b_profile.clone(),
             ..base
         };
 
         pool.acquire(conv_a).await;
         pool.acquire(conv_b).await;
 
-        assert_eq!(
-            pool.ref_count_for("findesk-ws-default-abc-sess-conv-a", dir.path()).await,
-            1
-        );
-        assert_eq!(
-            pool.ref_count_for("findesk-ws-default-abc-sess-conv-b", dir.path()).await,
-            1
-        );
+        assert_eq!(pool.ref_count_for(&conv_a_profile, dir.path()).await, 1);
+        assert_eq!(pool.ref_count_for(&conv_b_profile, dir.path()).await, 1);
         assert_eq!(pool.total_ref_count().await, 2);
     }
 
@@ -288,7 +291,10 @@ mod tests {
         let pool = FinclawGatewayPool::new(FindeskConfig::from_env());
         let dir = tempdir().unwrap();
         let workspace_profile = "findesk-ws-default-abc123";
-        let conv_profile = format!("{workspace_profile}-sess-conv1");
+        let conv_profile = format!(
+            "{}-conv1",
+            derive_finclaw_conversation_profile_prefix(workspace_profile)
+        );
         pool.acquire(FinclawGatewayConfig {
             cli_path: None,
             profile: conv_profile,

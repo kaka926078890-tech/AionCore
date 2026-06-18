@@ -1,6 +1,7 @@
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde_json::{Value, json};
+use tracing::info;
 
 use crate::finclaw::approval::{FinclawApprovalRequired, parse_approval_required};
 
@@ -127,7 +128,13 @@ fn parse_sse_frame(frame: &str) -> Option<FinclawInferEvent> {
                 Some(FinclawInferEvent::TextChunk(delta.to_string()))
             }
         }
-        "done" | "run_finished" | "finish" => Some(FinclawInferEvent::Finished),
+        "done" | "run_finished" | "finish" => {
+            info!(
+                finclaw_event_type = %event_type,
+                "FinClaw infer terminal SSE frame received"
+            );
+            Some(FinclawInferEvent::Finished)
+        }
         "error" | "run_error" => {
             let message = parsed
                 .get("message")

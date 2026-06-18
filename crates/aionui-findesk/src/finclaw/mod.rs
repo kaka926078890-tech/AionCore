@@ -39,7 +39,7 @@ pub use port_json::{
     stop_profile_daemon,
 };
 pub use workspace::{
-    derive_finclaw_conversation_profile, derive_finclaw_workspace_profile, ensure_finclaw_conversation_profile,
-    ensure_finclaw_workspace_profile, resolve_finclaw_serve_cwd,
+    derive_finclaw_conversation_profile, derive_finclaw_conversation_profile_prefix, derive_finclaw_workspace_profile,
+    ensure_finclaw_conversation_profile, ensure_finclaw_workspace_profile, resolve_finclaw_serve_cwd,
 };
 pub use workspace_validate::{is_path_within_root, validate_finclaw_workspace_path};

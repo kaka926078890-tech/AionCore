@@ -482,6 +482,10 @@ impl IAgentTask for FinclawAgentManager {
                             self.handle_approval_required(approval).await?;
                         }
                         FinclawInferEvent::Finished => {
+                            info!(
+                                conversation_id = %self.conversation_id(),
+                                "FinClaw infer finished from terminal SSE"
+                            );
                             self.runtime.emit_finish(None);
                             return Ok(());
                         }
@@ -491,6 +495,10 @@ impl IAgentTask for FinclawAgentManager {
                         }
                     }
                 }
+                info!(
+                    conversation_id = %self.conversation_id(),
+                    "FinClaw infer stream ended without terminal SSE; emitting synthetic finish"
+                );
                 self.runtime.emit_finish(None);
                 Ok(())
             } => result,

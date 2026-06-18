@@ -125,6 +125,44 @@ fn parse_provider_with_model_value(value: &serde_json::Value) -> Option<Provider
     })
 }
 
+/// Effective model id used by agent factories (prefers `use_model` when set).
+pub fn effective_model_id(model: &ProviderWithModel) -> &str {
+    model
+        .use_model
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(model.model.as_str())
+}
+
+fn provider_model_runtime_identity(model: &ProviderWithModel) -> (&str, &str) {
+    (model.provider_id.as_str(), effective_model_id(model))
+}
+
+/// True when the provider row or effective model id changed.
+pub fn provider_model_runtime_identity_changed(before: &ProviderWithModel, after: &ProviderWithModel) -> bool {
+    provider_model_runtime_identity(before) != provider_model_runtime_identity(after)
+}
+
+/// Detect `extra.providerModel` patches that change the runtime model for non-aionrs conversations.
+pub fn extra_provider_model_patch_changed(
+    existing: &ConversationRow,
+    merged_extra: Option<&str>,
+    req_extra: Option<&serde_json::Value>,
+) -> bool {
+    if !req_extra.is_some_and(|extra| extra.get(PROVIDER_MODEL_EXTRA_KEY).is_some()) {
+        return false;
+    }
+
+    let before = provider_model_from_conversation_row(existing);
+    let after_extra = merged_extra.unwrap_or(existing.extra.as_str());
+    let after_row = ConversationRow {
+        extra: after_extra.to_string(),
+        ..existing.clone()
+    };
+    let after = provider_model_from_conversation_row(&after_row);
+    provider_model_runtime_identity_changed(&before, &after)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +301,47 @@ mod tests {
         // The vendor-label fallback must not leak in.
         assert_ne!(canonical_resolved.provider_id, "aionrs");
         assert_ne!(legacy_resolved.provider_id, "aionrs");
+    }
+
+    #[test]
+    fn extra_provider_model_patch_changed_detects_model_switch() {
+        let mut existing = row_with_model_and_extra(
+            None,
+            r#"{"providerModel":{"provider_id":"deepseek-id","model":"deepseek-chat","use_model":"deepseek-chat"}}"#,
+        );
+        existing.r#type = "finclaw".into();
+
+        let merged = r#"{"providerModel":{"provider_id":"kimi-id","model":"kimi-k2.6","use_model":"kimi-k2.6"}}"#;
+        let req_extra = serde_json::json!({
+            "providerModel": {
+                "provider_id": "kimi-id",
+                "model": "kimi-k2.6",
+                "use_model": "kimi-k2.6"
+            }
+        });
+
+        assert!(extra_provider_model_patch_changed(
+            &existing,
+            Some(merged),
+            Some(&req_extra),
+        ));
+    }
+
+    #[test]
+    fn extra_provider_model_patch_ignored_without_provider_model_key() {
+        let mut existing = row_with_model_and_extra(
+            None,
+            r#"{"providerModel":{"provider_id":"deepseek-id","model":"deepseek-chat"}}"#,
+        );
+        existing.r#type = "finclaw".into();
+
+        let merged = r#"{"providerModel":{"provider_id":"deepseek-id","model":"deepseek-chat"},"note":"x"}"#;
+        let req_extra = serde_json::json!({ "note": "x" });
+
+        assert!(!extra_provider_model_patch_changed(
+            &existing,
+            Some(merged),
+            Some(&req_extra),
+        ));
     }
 }

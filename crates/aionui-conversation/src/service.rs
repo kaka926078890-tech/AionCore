@@ -42,6 +42,7 @@ use crate::error::ConversationError;
 use crate::session_context::SessionContextBuilder;
 use crate::skill_resolver::SkillResolver;
 use crate::skill_snapshot::{backfill_skills_if_missing, compute_initial_skills};
+use crate::task_options::extra_provider_model_patch_changed;
 use crate::turn_orchestrator::{ConversationTurnOrchestrator, TurnStartInput};
 use std::sync::RwLock;
 
@@ -860,6 +861,9 @@ impl ConversationService {
             existing.model.as_deref() != Some(new_json.as_str())
         });
 
+        let extra_provider_model_changed = existing_type != AgentType::Aionrs
+            && extra_provider_model_patch_changed(&existing, merged_extra.as_deref(), req.extra.as_ref());
+
         let finclaw_tool_policy_changed = if existing_type == AgentType::Finclaw {
             let existing_extra: serde_json::Value =
                 serde_json::from_str(&existing.extra).unwrap_or_else(|_| serde_json::json!({}));
@@ -909,9 +913,10 @@ impl ConversationService {
 
         self.conversation_repo.update(id, &updates).await?;
 
-        if model_changed || finclaw_tool_policy_changed {
+        if model_changed || extra_provider_model_changed || finclaw_tool_policy_changed {
             info!(
                 model_changed,
+                extra_provider_model_changed,
                 finclaw_tool_policy_changed,
                 "Conversation updated, killing agent task due to runtime config change"
             );

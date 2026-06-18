@@ -1042,6 +1042,50 @@ async fn update_model() {
 }
 
 #[tokio::test]
+async fn update_finclaw_extra_provider_model_kills_agent() {
+    let (svc, _broadcaster, _repo, _default_task_mgr) = make_service();
+    let task_mgr = Arc::new(MockTaskManager::new());
+    let workspace = ensure_test_workspace_path();
+
+    let create_req: CreateConversationRequest = serde_json::from_value(json!({
+        "type": "finclaw",
+        "extra": {
+            "workspace": workspace,
+            "providerModel": {
+                "provider_id": "deepseek-id",
+                "model": "deepseek-chat",
+                "use_model": "deepseek-chat"
+            }
+        }
+    }))
+    .unwrap();
+    let conv = svc.create("user_1", create_req).await.unwrap();
+    task_mgr.insert_agent(
+        &conv.id,
+        AgentInstance::Mock(Arc::new(ScriptedAgent::new(&conv.id, vec![]))),
+    );
+
+    let req: UpdateConversationRequest = serde_json::from_value(json!({
+        "extra": {
+            "providerModel": {
+                "provider_id": "kimi-id",
+                "model": "kimi-k2.6",
+                "use_model": "kimi-k2.6"
+            }
+        }
+    }))
+    .unwrap();
+    let task_mgr_dyn: Arc<dyn IWorkerTaskManager> = task_mgr.clone();
+    let updated = svc.update("user_1", &conv.id, req, &task_mgr_dyn).await.unwrap();
+
+    assert_eq!(
+        updated.extra["providerModel"]["use_model"].as_str(),
+        Some("kimi-k2.6")
+    );
+    assert_eq!(task_mgr.kill_count(), 1);
+}
+
+#[tokio::test]
 async fn update_not_found() {
     let (svc, _broadcaster, _repo, task_mgr) = make_service();
     let req: UpdateConversationRequest = serde_json::from_value(json!({ "name": "x" })).unwrap();

@@ -19,6 +19,19 @@ pub fn strip_think_tags(text: &str) -> String {
     THINK_TAG_RE.replace_all(text, "").into_owned()
 }
 
+/// Strip model thinking tags, but never turn a non-empty response into an empty
+/// visible answer. Some providers incorrectly wrap the whole final answer in a
+/// thinking tag; hiding that at stream finalization makes text appear and then
+/// disappear in the UI.
+pub fn strip_think_tags_preserving_answer(text: &str) -> String {
+    let stripped = strip_think_tags(text);
+    if stripped.trim().is_empty() && !text.trim().is_empty() {
+        text.to_string()
+    } else {
+        stripped
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Cron command detection
 // ---------------------------------------------------------------------------
@@ -257,7 +270,7 @@ impl MessageMiddleware {
     /// Process a completed agent message through the middleware pipeline.
     pub async fn process(&self, message: &str, user_id: &str, conversation_id: &str) -> MiddlewareResult {
         // Step 1: Strip think tags
-        let cleaned = strip_think_tags(message);
+        let cleaned = strip_think_tags_preserving_answer(message);
 
         // Step 2: Detect cron commands
         if !has_cron_commands(&cleaned) {
@@ -364,6 +377,18 @@ mod tests {
     #[test]
     fn strip_think_tags_empty() {
         assert_eq!(strip_think_tags(""), "");
+    }
+
+    #[test]
+    fn strip_think_tags_preserving_answer_keeps_all_thinking_response_visible() {
+        let input = "<think>看来这个环境对系统工具限制比较严格。</think>";
+        assert_eq!(strip_think_tags_preserving_answer(input), input);
+    }
+
+    #[test]
+    fn strip_think_tags_preserving_answer_still_strips_when_answer_remains() {
+        let input = "<think>private</think>Answer here";
+        assert_eq!(strip_think_tags_preserving_answer(input), "Answer here");
     }
 
     #[test]
