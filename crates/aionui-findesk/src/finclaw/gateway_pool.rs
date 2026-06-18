@@ -153,6 +153,7 @@ fn profile_matches_workspace(profile: &str, workspace_profile: &str) -> bool {
             "{}-",
             derive_finclaw_conversation_profile_prefix(workspace_profile)
         ))
+        || profile.starts_with(&format!("{workspace_profile}-sess-"))
 }
 
 static SHARED_POOL: OnceLock<FinclawGatewayPool> = OnceLock::new();
@@ -298,6 +299,25 @@ mod tests {
         pool.acquire(FinclawGatewayConfig {
             cli_path: None,
             profile: conv_profile,
+            security_mode: None,
+            serve_cwd: dir.path().to_path_buf(),
+            llm_serve_env: HashMap::new(),
+            model_fingerprint: None,
+        })
+        .await;
+
+        assert_eq!(pool.ref_count_for_workspace(workspace_profile, dir.path()).await, 1);
+    }
+
+    #[tokio::test]
+    async fn ref_count_for_workspace_matches_legacy_conversation_profiles() {
+        let pool = FinclawGatewayPool::new(FindeskConfig::from_env());
+        let dir = tempdir().unwrap();
+        let workspace_profile = "findesk-ws-default-abc123";
+        let legacy_profile = format!("{workspace_profile}-sess-conv1");
+        pool.acquire(FinclawGatewayConfig {
+            cli_path: None,
+            profile: legacy_profile,
             security_mode: None,
             serve_cwd: dir.path().to_path_buf(),
             llm_serve_env: HashMap::new(),

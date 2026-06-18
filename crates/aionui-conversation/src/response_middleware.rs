@@ -13,6 +13,8 @@ use tracing::{debug, warn};
 /// Uses `(?s)` (dot-all) so `.` matches newlines within the tag body.
 static THINK_TAG_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)<think(?:ing)?>.*?</think(?:ing)?>").expect("valid think-tag regex"));
+static FULL_THINK_TAG_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)^\s*<think(?:ing)?>(.*?)</think(?:ing)?>\s*$").expect("valid think-tag regex"));
 
 /// Remove `<think>...</think>` and `<thinking>...</thinking>` tags from text.
 pub fn strip_think_tags(text: &str) -> String {
@@ -26,7 +28,11 @@ pub fn strip_think_tags(text: &str) -> String {
 pub fn strip_think_tags_preserving_answer(text: &str) -> String {
     let stripped = strip_think_tags(text);
     if stripped.trim().is_empty() && !text.trim().is_empty() {
-        text.to_string()
+        FULL_THINK_TAG_RE
+            .captures(text)
+            .and_then(|captures| captures.get(1).map(|body| body.as_str().trim().to_string()))
+            .filter(|body| !body.is_empty())
+            .unwrap_or_else(|| text.to_string())
     } else {
         stripped
     }
@@ -382,7 +388,10 @@ mod tests {
     #[test]
     fn strip_think_tags_preserving_answer_keeps_all_thinking_response_visible() {
         let input = "<think>看来这个环境对系统工具限制比较严格。</think>";
-        assert_eq!(strip_think_tags_preserving_answer(input), input);
+        assert_eq!(
+            strip_think_tags_preserving_answer(input),
+            "看来这个环境对系统工具限制比较严格。"
+        );
     }
 
     #[test]
