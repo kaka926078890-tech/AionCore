@@ -2887,6 +2887,37 @@ async fn stop_stream_with_active_agent() {
 }
 
 #[tokio::test]
+async fn cancel_with_empty_turn_id_cancels_active_turn() {
+    let (svc, _broadcaster, _repo, _task_mgr) = make_service();
+    let task_mgr = Arc::new(MockTaskManager::new());
+
+    let conv = svc.create("user_1", make_create_req()).await.unwrap();
+    let send = svc
+        .send_message(
+            "user_1",
+            &conv.id,
+            make_send_req(),
+            &(task_mgr.clone() as Arc<dyn IWorkerTaskManager>),
+        )
+        .await
+        .unwrap();
+
+    let result = svc
+        .cancel(
+            "user_1",
+            &conv.id,
+            "",
+            &(task_mgr as Arc<dyn IWorkerTaskManager>),
+        )
+        .await;
+    assert!(result.is_ok());
+    assert_eq!(
+        result.unwrap().runtime.turn_id.as_deref(),
+        Some(send.turn_id.as_str())
+    );
+}
+
+#[tokio::test]
 async fn cancel_with_mismatched_turn_id_does_not_cancel_and_returns_current_runtime() {
     let (svc, _broadcaster, _repo, _task_mgr) = make_service();
     let slow_task_mgr = Arc::new(SlowBuildTaskManager::new(Duration::from_millis(500)));

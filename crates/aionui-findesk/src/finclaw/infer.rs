@@ -1,9 +1,17 @@
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde_json::{Value, json};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::info;
 
 use crate::finclaw::approval::{FinclawApprovalRequired, parse_approval_required};
+
+async fn wait_infer_aborted(abort: Arc<AtomicBool>) {
+    while !abort.load(Ordering::Relaxed) {
+        tokio::task::yield_now().await;
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct FinclawToolProgressEvent {
@@ -30,32 +38,38 @@ pub enum FinclawInferEvent {
 pub async fn post_infer_stream(
     client: &Client,
     claw_port: u16,
-    conversation_id: &str,
+    session_id: &str,
     user_id: &str,
     message: &str,
     capability: &str,
     max_tokens: Option<u32>,
+    abort: Arc<AtomicBool>,
 ) -> Result<impl futures_util::Stream<Item = Result<FinclawInferEvent, String>> + use<>, String> {
     let url = format!("http://127.0.0.1:{claw_port}/ai/infer/stream");
     let mut body = json!({
         "message": message,
         "user_id": user_id,
-        "session_id": conversation_id,
+        "session_id": session_id,
         "capability": capability,
     });
     if let Some(max_tokens) = max_tokens {
         body["max_tokens"] = json!(max_tokens);
     }
 
-    let response = client
+    let send = client
         .post(url)
         .header("Accept", "text/event-stream")
         .header("Content-Type", "application/json")
         .header("X-User-ID", user_id)
         .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        .send();
+
+    let response = tokio::select! {
+        result = send => result.map_err(|e| e.to_string())?,
+        _ = wait_infer_aborted(abort.clone()) => {
+            return Err("FinClaw infer cancelled".to_string());
+        }
+    };
 
     if !response.status().is_success() {
         let status = response.status();
@@ -71,7 +85,14 @@ pub async fn post_infer_stream(
     let event_stream = async_stream::stream! {
         let mut buffer = String::new();
         futures_util::pin_mut!(byte_stream);
-        while let Some(chunk) = byte_stream.next().await {
+        loop {
+            let chunk = tokio::select! {
+                chunk = byte_stream.next() => match chunk {
+                    Some(chunk) => chunk,
+                    None => break,
+                },
+                _ = wait_infer_aborted(abort.clone()) => break,
+            };
             let chunk = chunk.map_err(|e| e.to_string())?;
             buffer.push_str(&String::from_utf8_lossy(&chunk));
             while let Some(pos) = buffer.find("\n\n") {

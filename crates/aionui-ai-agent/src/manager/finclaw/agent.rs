@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use aionui_api_types::FinclawBuildExtra;
 use aionui_common::{
@@ -18,7 +19,7 @@ use aionui_findesk::finclaw::{
     prepare_finclaw_llm_for_profiles,
     resolve_finclaw_infer_capability, resolve_finclaw_serve_cwd, shared_gateway_pool, submit_approval_resolve,
 };
-use futures_util::{StreamExt, pin_mut};
+use futures_util::{FutureExt, StreamExt, pin_mut};
 use reqwest::Client;
 use serde_json::{Map, Value, json};
 use tokio::sync::{Mutex, Notify, oneshot};
@@ -49,6 +50,9 @@ pub struct FinclawAgentManager {
     config: FinclawBuildExtra,
     http: Client,
     cancel_notify: Arc<Notify>,
+    infer_abort: Arc<AtomicBool>,
+    /// Incremented on each `cancel()` so stale `notify_one` permits cannot abort a new turn.
+    cancel_generation: Arc<AtomicU64>,
     pending_approvals: Arc<Mutex<HashMap<String, PendingApproval>>>,
 }
 
@@ -136,6 +140,8 @@ impl FinclawAgentManager {
             config,
             http: Client::new(),
             cancel_notify: Arc::new(Notify::new()),
+            infer_abort: Arc::new(AtomicBool::new(false)),
+            cancel_generation: Arc::new(AtomicU64::new(0)),
             pending_approvals: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -146,6 +152,24 @@ impl FinclawAgentManager {
             .clone()
             .filter(|id| !id.is_empty())
             .unwrap_or_else(|| "default".to_string())
+    }
+
+    /// Drop `notify_one` permits left when the prior turn exited via `infer_abort`
+    /// without consuming `cancel_notify`.
+    fn drain_stale_cancel_permits(&self, started_generation: u64) {
+        while let Some(()) = self.cancel_notify.notified().now_or_never() {
+            if self.cancel_generation.load(Ordering::Relaxed) > started_generation {
+                return;
+            }
+            info!(
+                conversation_id = %self.conversation_id(),
+                "draining stale FinClaw cancel notify"
+            );
+        }
+    }
+
+    fn is_cancelled_for_turn(&self, started_generation: u64) -> bool {
+        self.cancel_generation.load(Ordering::Relaxed) > started_generation
     }
 
     pub fn get_confirmations(&self) -> Vec<Confirmation> {
@@ -202,12 +226,16 @@ impl FinclawAgentManager {
         Ok(())
     }
 
-    async fn handle_approval_required(&self, approval: FinclawApprovalRequired) -> Result<(), AgentError> {
+    async fn handle_approval_required(
+        &self,
+        approval: FinclawApprovalRequired,
+        started_generation: u64,
+    ) -> Result<(), AgentError> {
         let call_id = approval
             .tool_call_id
             .clone()
             .unwrap_or_else(|| approval.approval_request_id.clone());
-        let (decision_tx, decision_rx) = oneshot::channel();
+        let (decision_tx, mut decision_rx) = oneshot::channel();
 
         {
             let mut pending = self.pending_approvals.lock().await;
@@ -260,11 +288,18 @@ impl FinclawAgentManager {
                 },
             )));
 
-        tokio::select! {
-            _ = decision_rx => Ok(()),
-            _ = self.cancel_notify.notified() => {
-                self.pending_approvals.lock().await.clear();
-                Err(AgentError::bad_request("FinClaw approval cancelled"))
+        loop {
+            tokio::select! {
+                result = &mut decision_rx => {
+                    result.map_err(|_| AgentError::bad_request("FinClaw approval decision channel closed"))?;
+                    return Ok(());
+                }
+                _ = self.cancel_notify.notified() => {
+                    if self.is_cancelled_for_turn(started_generation) {
+                        self.pending_approvals.lock().await.clear();
+                        return Err(AgentError::bad_request("FinClaw approval cancelled"));
+                    }
+                }
             }
         }
     }
@@ -405,33 +440,66 @@ impl IAgentTask for FinclawAgentManager {
 
         info!(
             conversation_id = %self.conversation_id(),
+            session_id = %self.conversation_id(),
             msg_id = %data.msg_id,
             "FinClaw send_message started"
         );
         self.runtime.bump_activity();
         self.runtime.reset_for_new_turn(ConversationStatus::Running);
+        let started_generation = self.cancel_generation.load(Ordering::Relaxed);
+        self.infer_abort.store(false, Ordering::Relaxed);
+        self.drain_stale_cancel_permits(started_generation);
+        if self.is_cancelled_for_turn(started_generation) {
+            info!(
+                conversation_id = %self.conversation_id(),
+                "FinClaw send_message aborted before infer (stop during startup)"
+            );
+            self.runtime.emit_finish(None);
+            return Ok(());
+        }
 
         let user_id = self.resolve_user_id();
         let capability = resolve_finclaw_infer_capability(self.config.session_mode.as_deref()).to_string();
         let max_tokens = self.config.max_tokens;
+        let infer_abort = Arc::clone(&self.infer_abort);
+        let session_id = self.conversation_id().to_string();
 
-        let stream = post_infer_stream(
+        let stream = match post_infer_stream(
             &self.http,
             port,
-            self.conversation_id(),
+            &session_id,
             &user_id,
             &data.content,
             &capability,
             max_tokens,
+            infer_abort,
         )
         .await
-        .map_err(|e| AgentSendError::from_agent_error(AgentError::bad_gateway(e)))?;
+        {
+            Ok(stream) => stream,
+            Err(error) if error == "FinClaw infer cancelled" => {
+                info!(conversation_id = %self.conversation_id(), "FinClaw infer cancelled before stream opened");
+                self.runtime.emit_finish(None);
+                return Ok(());
+            }
+            Err(error) => {
+                return Err(AgentSendError::from_agent_error(AgentError::bad_gateway(error)));
+            }
+        };
         pin_mut!(stream);
         let mut seen_tool_calls: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        let send_result = tokio::select! {
-            result = async {
-                while let Some(item) = stream.next().await {
+        loop {
+            tokio::select! {
+                item = stream.next() => {
+                    let Some(item) = item else {
+                        info!(
+                            conversation_id = %self.conversation_id(),
+                            "FinClaw infer stream ended without terminal SSE; emitting synthetic finish"
+                        );
+                        self.runtime.emit_finish(None);
+                        break;
+                    };
                     let event = item.map_err(AgentError::bad_gateway)?;
                     match event {
                         FinclawInferEvent::TextChunk(delta) => {
@@ -479,7 +547,9 @@ impl IAgentTask for FinclawAgentManager {
                             )));
                         }
                         FinclawInferEvent::ApprovalRequired(approval) => {
-                            self.handle_approval_required(approval).await?;
+                            self.handle_approval_required(approval, started_generation)
+                                .await
+                                .map_err(AgentSendError::from_agent_error)?;
                         }
                         FinclawInferEvent::Finished => {
                             info!(
@@ -487,37 +557,41 @@ impl IAgentTask for FinclawAgentManager {
                                 "FinClaw infer finished from terminal SSE"
                             );
                             self.runtime.emit_finish(None);
-                            return Ok(());
+                            break;
                         }
                         FinclawInferEvent::Error(message) => {
                             self.runtime.emit_error(message);
-                            return Ok(());
+                            break;
                         }
                     }
                 }
-                info!(
-                    conversation_id = %self.conversation_id(),
-                    "FinClaw infer stream ended without terminal SSE; emitting synthetic finish"
-                );
-                self.runtime.emit_finish(None);
-                Ok(())
-            } => result,
-            _ = self.cancel_notify.notified() => {
-                info!(conversation_id = %self.conversation_id(), "FinClaw infer cancelled");
-                self.pending_approvals.lock().await.clear();
-                // Ensure stream relay receives a terminal event on stop so
-                // runtime_state releases active_turn_id immediately.
-                self.runtime.emit_finish(None);
-                Ok(())
+                _ = self.cancel_notify.notified() => {
+                    if !self.is_cancelled_for_turn(started_generation) {
+                        info!(
+                            conversation_id = %self.conversation_id(),
+                            "ignoring stale FinClaw cancel notify during infer"
+                        );
+                        continue;
+                    }
+                    info!(conversation_id = %self.conversation_id(), session_id = %session_id, "FinClaw infer cancelled");
+                    self.pending_approvals.lock().await.clear();
+                    self.runtime.emit_finish(None);
+                    break;
+                }
             }
-        };
+        }
 
         self.runtime.bump_activity();
-        send_result.map_err(AgentSendError::from_agent_error)
+        Ok(())
     }
 
     async fn cancel(&self) -> Result<(), AgentError> {
-        self.cancel_notify.notify_waiters();
+        // Mirror finclaw CLI Ctrl-C: drop the SSE consumer so the gateway abort signal fires.
+        self.cancel_generation.fetch_add(1, Ordering::Relaxed);
+        self.infer_abort.store(true, Ordering::Relaxed);
+        // notify_one stores a permit for waiters that have not registered yet
+        // (e.g. cancel during post_infer_stream); notify_waiters would drop that signal.
+        self.cancel_notify.notify_one();
         self.pending_approvals.lock().await.clear();
         // Idempotent: if send_message already emitted Finish, this is a no-op.
         self.runtime.emit_finish(None);

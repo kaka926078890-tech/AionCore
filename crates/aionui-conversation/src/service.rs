@@ -1763,22 +1763,41 @@ impl ConversationService {
             })?;
 
         let active_turn_id = self.runtime_state.active_turn_id_for(conversation_id);
-        if active_turn_id.as_deref() != Some(turn_id) {
-            info!(
-                conversation_id,
-                requested_turn_id = %turn_id,
-                active_turn_id = active_turn_id.as_deref(),
-                "cancel ignored because turn id mismatched"
-            );
-            return Ok(CancelConversationResponse {
-                runtime: self.runtime_summary_for(conversation_id).await,
-            });
-        }
+        let turn_id = turn_id.trim();
+        let effective_turn_id = match active_turn_id.as_deref() {
+            None => {
+                info!(conversation_id, "No active turn to cancel; returning runtime summary");
+                return Ok(CancelConversationResponse {
+                    runtime: self.runtime_summary_for(conversation_id).await,
+                });
+            }
+            Some(active) if turn_id.is_empty() => {
+                info!(
+                    conversation_id,
+                    active_turn_id = active,
+                    "cancel with empty turn_id; using active turn"
+                );
+                active
+            }
+            Some(active) if turn_id == active => active,
+            Some(active) => {
+                info!(
+                    conversation_id,
+                    requested_turn_id = %turn_id,
+                    active_turn_id = active,
+                    "cancel ignored because turn id mismatched"
+                );
+                return Ok(CancelConversationResponse {
+                    runtime: self.runtime_summary_for(conversation_id).await,
+                });
+            }
+        };
 
         let Some(agent) = task_manager.get_task(conversation_id) else {
             info!(
                 conversation_id,
-                turn_id, "No active agent to cancel; returning runtime summary"
+                turn_id = effective_turn_id,
+                "No active agent to cancel; returning runtime summary"
             );
             return Ok(CancelConversationResponse {
                 runtime: self.runtime_summary_for(conversation_id).await,
@@ -1787,11 +1806,16 @@ impl ConversationService {
 
         self.runtime_state.mark_cancelling(conversation_id);
         if let Err(e) = agent.cancel().await {
-            warn!(conversation_id, turn_id, error = %ErrorChain(&e), "Failed to cancel agent");
+            warn!(
+                conversation_id,
+                turn_id = effective_turn_id,
+                error = %ErrorChain(&e),
+                "Failed to cancel agent"
+            );
             return Err(e.into());
         }
 
-        info!(conversation_id, turn_id, "Stream cancel acknowledged");
+        info!(conversation_id, turn_id = effective_turn_id, "Stream cancel acknowledged");
         Ok(CancelConversationResponse {
             runtime: self.runtime_summary_for(conversation_id).await,
         })
