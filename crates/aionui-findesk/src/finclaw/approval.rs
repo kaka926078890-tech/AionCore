@@ -86,7 +86,7 @@ pub fn parse_approval_required(parsed: &Value) -> Option<FinclawApprovalRequired
     })
 }
 
-/// Submit an approval decision to the loopback FinClaw serve daemon.
+/// Submit an approval decision to the loopback FinClaw serve daemon (`POST /ai/infer/approval/resolve`).
 pub async fn submit_approval_resolve(
     client: &Client,
     claw_port: u16,
@@ -95,11 +95,13 @@ pub async fn submit_approval_resolve(
     approval: &FinclawApprovalRequired,
     decision: FinclawApprovalDecision,
     reason: Option<&str>,
+    auth_token: Option<&str>,
 ) -> Result<(), String> {
-    let url = format!("http://127.0.0.1:{claw_port}/ai/approval/resolve");
+    let url = format!("http://127.0.0.1:{claw_port}/ai/infer/approval/resolve");
+    let approved = matches!(decision, FinclawApprovalDecision::Allow);
     let mut body = json!({
         "approval_request_id": approval.approval_request_id,
-        "decision": decision.as_str(),
+        "approved": approved,
         "user_id": user_id,
         "session_id": session_id,
         "tool_name": approval.tool_name,
@@ -117,14 +119,14 @@ pub async fn submit_approval_resolve(
         body["reason"] = json!(reason);
     }
 
-    let response = client
+    let mut request = client
         .post(url)
         .header("Content-Type", "application/json")
-        .header("X-User-ID", user_id)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        .header("X-User-ID", user_id);
+    if let Some(token) = auth_token.filter(|t| !t.is_empty()) {
+        request = request.header("Authorization", format!("Bearer {token}"));
+    }
+    let response = request.json(&body).send().await.map_err(|e| e.to_string())?;
 
     if response.status().is_success() {
         Ok(())
@@ -140,13 +142,22 @@ pub async fn submit_approval_resolve(
 }
 
 /// Map a UI confirmation payload to an approval decision.
+///
+/// Desktop clients send `data` as a bare string (`"allow_once"`) while ACP-style
+/// clients send an object with `value` / `option_id`.
 pub fn decision_from_confirm_data(data: &Value) -> FinclawApprovalDecision {
-    let raw = data
-        .get("value")
-        .or_else(|| data.get("option_id"))
-        .and_then(Value::as_str)
-        .unwrap_or("deny")
-        .to_ascii_lowercase();
+    let raw = match data {
+        Value::String(v) => v.clone(),
+        Value::Object(map) => map
+            .get("value")
+            .or_else(|| map.get("option_id"))
+            .or_else(|| map.get("optionId"))
+            .and_then(Value::as_str)
+            .unwrap_or("deny")
+            .to_string(),
+        _ => "deny".to_string(),
+    }
+    .to_ascii_lowercase();
 
     if matches!(
         raw.as_str(),
@@ -201,7 +212,15 @@ mod tests {
             FinclawApprovalDecision::Allow
         );
         assert_eq!(
+            decision_from_confirm_data(&json!("allow_once")),
+            FinclawApprovalDecision::Allow
+        );
+        assert_eq!(
             decision_from_confirm_data(&json!({"value": "reject_once"})),
+            FinclawApprovalDecision::Deny
+        );
+        assert_eq!(
+            decision_from_confirm_data(&json!("reject_once")),
             FinclawApprovalDecision::Deny
         );
     }

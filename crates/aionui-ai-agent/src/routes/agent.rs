@@ -24,8 +24,9 @@ use aionui_auth::CurrentUser;
 use aionui_common::ApiError;
 #[cfg(feature = "findesk")]
 use aionui_findesk::finclaw::{
-    FinclawToolPolicy, HostAgentRow, apply_tool_policy_serve_overlay, finclaw_tool_policy_to_wire,
-    ensure_finclaw_workspace_profile, is_finclaw_tool_policy, read_tool_policy_from_serve_overlay,
+    FinclawToolPolicy, HostAgentRow, apply_tool_policy_serve_overlay, apply_tool_policy_to_profile,
+    ensure_finclaw_conversation_profile, ensure_finclaw_workspace_profile, finclaw_tool_policy_to_wire,
+    is_finclaw_tool_policy, resolve_effective_tool_policy,
     resolve_finclaw_host_context, shared_gateway_pool,
     validate_finclaw_workspace_path,
 };
@@ -96,7 +97,12 @@ async fn finclaw_get_tool_policy(
         .unwrap_or("default")
         .to_string();
     let derived_profile = ensure_finclaw_workspace_profile(&profile, &serve_cwd).map_err(ApiError::BadRequest)?;
-    let policy = read_tool_policy_from_serve_overlay(&serve_cwd).unwrap_or(FinclawToolPolicy::AutoAll);
+    let policy = resolve_effective_tool_policy(
+        None,
+        &serve_cwd,
+        Some(&derived_profile),
+    );
+
     let mut pool_ref_count = shared_gateway_pool()
         .ref_count_for_workspace(&derived_profile, &serve_cwd)
         .await;
@@ -139,7 +145,22 @@ async fn finclaw_apply_tool_policy(
     let serve_cwd = validate_finclaw_workspace_path(workspace).map_err(ApiError::BadRequest)?;
     let derived_profile = ensure_finclaw_workspace_profile(&profile, &serve_cwd).map_err(ApiError::BadRequest)?;
 
+    let policy = FinclawToolPolicy::from_wire(&req.tool_policy)
+        .ok_or_else(|| ApiError::BadRequest("invalid finclaw tool_policy".into()))?;
+
     apply_tool_policy_serve_overlay(&serve_cwd, &req.tool_policy).map_err(ApiError::BadRequest)?;
+    apply_tool_policy_to_profile(&derived_profile, policy).map_err(ApiError::BadRequest)?;
+
+    if let Some(conversation_id) = req
+        .conversation_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        let serve_profile =
+            ensure_finclaw_conversation_profile(&derived_profile, conversation_id).map_err(ApiError::BadRequest)?;
+        apply_tool_policy_to_profile(&serve_profile, policy).map_err(ApiError::BadRequest)?;
+    }
 
     let (restarted, pool_ref_count) = shared_gateway_pool()
         .restart_gateways_for_workspace(&derived_profile, &serve_cwd)

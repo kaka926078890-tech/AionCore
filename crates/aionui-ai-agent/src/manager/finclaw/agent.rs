@@ -13,17 +13,18 @@ use aionui_db::IProviderRepository;
 use aionui_findesk::FindeskConfig;
 use aionui_findesk::finclaw::{
     FinclawApprovalRequired, FinclawGatewayConfig, FinclawInferEvent, FinclawToolProgressEvent,
-    apply_tool_policy_from_extra,
     build_finclaw_llm_config_slice, build_finclaw_model_fingerprint, decision_from_confirm_data,
     ensure_finclaw_conversation_profile, ensure_finclaw_workspace_profile, post_infer_stream,
     prepare_finclaw_llm_for_profiles,
-    resolve_finclaw_infer_capability, resolve_finclaw_serve_cwd, shared_gateway_pool, submit_approval_resolve,
+    read_port_json, approval_auth_token,
+    resolve_finclaw_infer_capability, resolve_finclaw_serve_cwd, shared_gateway_pool, stop_profile_daemon,
+    submit_approval_resolve, sync_tool_policy_for_serve,
 };
 use futures_util::{FutureExt, StreamExt, pin_mut};
 use reqwest::Client;
 use serde_json::{Map, Value, json};
 use tokio::sync::{Mutex, Notify, oneshot};
-use tracing::info;
+use tracing::{error, info};
 
 use crate::agent_runtime::AgentRuntime;
 use crate::agent_task::IAgentTask;
@@ -77,8 +78,14 @@ impl FinclawAgentManager {
         let serve_profile = ensure_finclaw_conversation_profile(&derived_profile, &conversation_id)
             .map_err(AgentError::bad_request)?;
 
-        apply_tool_policy_from_extra(&serve_cwd, config.finclaw_tool_policy.as_deref())
-            .map_err(AgentError::bad_request)?;
+        sync_tool_policy_for_serve(
+            &serve_cwd,
+            &derived_profile,
+            &serve_profile,
+            config.finclaw_tool_policy.as_deref(),
+        )
+        .map_err(AgentError::bad_request)?;
+        stop_profile_daemon(&serve_profile).await;
 
         if model.provider_id.trim().is_empty() {
             return Err(AgentError::bad_request(
@@ -184,12 +191,21 @@ impl FinclawAgentManager {
             .unwrap_or_default()
     }
 
-    pub fn confirm(&self, _msg_id: &str, call_id: &str, data: Value, _always_allow: bool) -> Result<(), AgentError> {
-        let item = self
-            .pending_approvals
-            .try_lock()
-            .map_err(|_| AgentError::internal("FinClaw approval lock poisoned"))?
-            .remove(call_id);
+    pub fn confirm(&self, msg_id: &str, call_id: &str, data: Value, always_allow: bool) -> Result<(), AgentError> {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.confirm_async(msg_id, call_id, data, always_allow))
+        })
+    }
+
+    pub async fn confirm_async(
+        &self,
+        _msg_id: &str,
+        call_id: &str,
+        data: Value,
+        _always_allow: bool,
+    ) -> Result<(), AgentError> {
+        let mut pending = self.pending_approvals.lock().await;
+        let item = pending.remove(call_id);
 
         let Some(item) = item else {
             return Err(AgentError::bad_request(format!(
@@ -204,26 +220,51 @@ impl FinclawAgentManager {
         let decision = decision_from_confirm_data(&data);
         let user_id = self.resolve_user_id();
         let approval = item.approval.clone();
-        let http = self.http.clone();
         let session_id = self.conversation_id().to_string();
-        let reason = data.get("reason").and_then(Value::as_str).map(str::to_string);
+        let reason = match &data {
+            Value::Object(map) => map.get("reason").and_then(Value::as_str).map(str::to_string),
+            _ => None,
+        };
+        let auth_token = approval_auth_token(read_port_json(&self.gateway_profile).as_ref());
 
-        let _ = item.decision_tx.send(());
-
-        tokio::spawn(async move {
-            let _ = submit_approval_resolve(
-                &http,
-                port,
-                &user_id,
-                &session_id,
-                &approval,
-                decision,
-                reason.as_deref(),
-            )
-            .await;
-        });
-
-        Ok(())
+        match submit_approval_resolve(
+            &self.http,
+            port,
+            &user_id,
+            &session_id,
+            &approval,
+            decision,
+            reason.as_deref(),
+            auth_token.as_deref(),
+        )
+        .await
+        {
+            Ok(()) => {
+                item.decision_tx.send(()).map_err(|_| {
+                    AgentError::internal("FinClaw approval decision channel closed before infer resumed")
+                })?;
+                info!(
+                    conversation_id = %session_id,
+                    call_id = %call_id,
+                    approval_request_id = %approval.approval_request_id,
+                    decision = decision.as_str(),
+                    "FinClaw approval resolved; infer stream may resume"
+                );
+                Ok(())
+            }
+            Err(error) => {
+                error!(
+                    conversation_id = %session_id,
+                    call_id = %call_id,
+                    approval_request_id = %approval.approval_request_id,
+                    decision = decision.as_str(),
+                    error = %error,
+                    "FinClaw approval resolve failed"
+                );
+                pending.insert(call_id.to_string(), item);
+                Err(AgentError::bad_gateway(error))
+            }
+        }
     }
 
     async fn handle_approval_required(

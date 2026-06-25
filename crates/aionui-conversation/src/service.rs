@@ -1420,7 +1420,9 @@ impl ConversationService {
             .find(|c| c.call_id == call_id)
             .map(|c| c.id.clone());
 
-        agent.confirm(&req.msg_id, call_id, req.data, req.always_allow)?;
+        agent
+            .confirm_async(&req.msg_id, call_id, req.data, req.always_allow)
+            .await?;
 
         if let Some(conf_id) = conf_id {
             let payload = serde_json::json!({

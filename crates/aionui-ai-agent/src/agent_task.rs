@@ -291,6 +291,22 @@ impl AgentInstance {
         }
     }
 
+    /// Async confirmation path. FinClaw must await daemon approval resolve
+    /// before unblocking the infer SSE stream.
+    pub async fn confirm_async(
+        &self,
+        msg_id: &str,
+        call_id: &str,
+        data: serde_json::Value,
+        always_allow: bool,
+    ) -> Result<(), AgentError> {
+        match self {
+            #[cfg(feature = "findesk")]
+            Self::Finclaw(m) => m.confirm_async(msg_id, call_id, data, always_allow).await,
+            _ => self.confirm(msg_id, call_id, data, always_allow),
+        }
+    }
+
     /// Check whether an action is auto-approved in this session.
     pub fn check_approval(&self, action: &str, command_type: Option<&str>) -> bool {
         match self {

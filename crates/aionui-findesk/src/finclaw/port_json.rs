@@ -13,6 +13,21 @@ pub struct FinclawPortJson {
     pub shim_port: Option<u16>,
     #[serde(default)]
     pub pid: Option<u32>,
+    #[serde(default)]
+    pub admin_token: Option<String>,
+    #[serde(default)]
+    pub control_token: Option<String>,
+}
+
+/// Bearer token for loopback `POST /ai/infer/approval/resolve`, when the daemon requires one.
+pub fn approval_auth_token(port_json: Option<&FinclawPortJson>) -> Option<String> {
+    port_json.and_then(|port| {
+        port.control_token
+            .as_deref()
+            .filter(|token| !token.is_empty())
+            .or(port.admin_token.as_deref().filter(|token| !token.is_empty()))
+            .map(str::to_string)
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +144,26 @@ mod tests {
         let parsed = parse_port_json(raw).expect("port json");
         assert_eq!(parsed.pid, Some(42));
         assert_eq!(parsed.claw_port, 8080);
+    }
+
+    #[test]
+    fn approval_auth_token_prefers_control_then_admin() {
+        let port = FinclawPortJson {
+            claw_port: 1,
+            shim_port: None,
+            pid: None,
+            admin_token: Some("admin".into()),
+            control_token: Some("control".into()),
+        };
+        assert_eq!(approval_auth_token(Some(&port)).as_deref(), Some("control"));
+        let port = FinclawPortJson {
+            claw_port: 1,
+            shim_port: None,
+            pid: None,
+            admin_token: Some("admin".into()),
+            control_token: None,
+        };
+        assert_eq!(approval_auth_token(Some(&port)).as_deref(), Some("admin"));
     }
 
     #[test]

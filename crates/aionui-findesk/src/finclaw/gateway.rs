@@ -72,27 +72,9 @@ impl FinclawGateway {
             }
         }
 
-        if !needs_skills_overlay
-            && let Some(port) = read_claw_port(&self.config.profile)
-        {
-            if probe_claw_health(port).await && probe_claw_real_llm_ready(port).await {
-                info!(
-                    profile = %self.config.profile,
-                    port,
-                    "reusing healthy finclaw serve daemon"
-                );
-                *self.claw_port.lock().await = Some(port);
-                return Ok(port);
-            }
-            if probe_claw_health(port).await {
-                warn!(
-                    profile = %self.config.profile,
-                    port,
-                    "finclaw daemon is mock-only; restarting with current profile config"
-                );
-                stop_profile_daemon(&self.config.profile).await;
-            }
-        }
+        // Findesk always passes `--config` overlays (including `presets.tool`). Reusing a
+        // profile-scoped daemon from `port.json` would ignore overlay updates after policy switches.
+        stop_profile_daemon(&self.config.profile).await;
 
         let binary = resolve_finclaw_binary(&self.findesk, self.config.cli_path.as_deref())
             .ok_or_else(|| "finclaw binary not found (set AIONCORE_FINCLAW_BIN)".to_string())?;

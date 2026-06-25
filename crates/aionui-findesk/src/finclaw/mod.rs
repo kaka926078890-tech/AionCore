@@ -31,12 +31,14 @@ pub use llm_config::{
     prepare_finclaw_llm_for_profiles,
 };
 pub use policy_profile::{
-    FinclawToolPolicy, apply_tool_policy_from_extra, apply_tool_policy_serve_overlay, finclaw_tool_policy_to_wire,
-    is_finclaw_tool_policy, read_tool_policy_from_serve_overlay, resolve_finclaw_tool_policy_display,
+    FinclawToolPolicy, apply_tool_policy_from_extra, apply_tool_policy_serve_overlay, apply_tool_policy_to_profile,
+    finclaw_tool_policy_to_wire, is_finclaw_tool_policy, read_tool_policy_from_profile,
+    read_tool_policy_from_serve_overlay, resolve_effective_tool_policy, resolve_finclaw_tool_policy_display,
+    sync_tool_policy_for_serve,
 };
 pub use port_json::{
-    probe_claw_health, probe_claw_real_llm_ready, read_claw_port, read_port_json, resolve_port_json_path,
-    stop_profile_daemon,
+    approval_auth_token, probe_claw_health, probe_claw_real_llm_ready, read_claw_port, read_port_json,
+    resolve_port_json_path, stop_profile_daemon,
 };
 pub use workspace::{
     derive_finclaw_conversation_profile, derive_finclaw_conversation_profile_prefix, derive_finclaw_workspace_profile,
